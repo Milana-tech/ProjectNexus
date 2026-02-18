@@ -1,89 +1,79 @@
-version: '3.8'
+name: project-nexus
 
 services:
   # ----------------------------------------------------------------------------
-  # 1) React Frontend
+  # 1) React Frontend (CRA)
   # ----------------------------------------------------------------------------
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: nexus-frontend
+    container_name: project-nexus-frontend
     ports:
       - "3000:3000"
     volumes:
       # Mount the local codebase over the container's app directory for hot-reloading
       - ./frontend:/app
-      # Create an anonymous volume for node_modules so local node_modules don't overwrite container's
+      # Prevent local node_modules from overwriting the container's
       - /app/node_modules
     environment:
       - NODE_ENV=development
-      # These variables ensure fast refresh and file polling work gracefully in Docker
       - CHOKIDAR_USEPOLLING=true
       - WDS_SOCKET_PORT=0
-    restart: unless-stopped
+      - REACT_APP_API_URL=${VITE_API_URL:-http://localhost:8000}
     depends_on:
-      - php-backend
-      - python-backend
+      - backend
+    restart: unless-stopped
 
   # ----------------------------------------------------------------------------
-  # 2) PHP Symfony Backend (Placeholder)
+  # 2) Python FastAPI Backend
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+    container_name: project-nexus-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  # ----------------------------------------------------------------------------
+  # 3) PHP Symfony Backend (Placeholder)
   # ----------------------------------------------------------------------------
   php-backend:
-    # Later replace this with your build context and Dockerfile
     image: php:8.2-fpm-alpine
     container_name: nexus-php-backend
     ports:
-      # Map to port 8000 on the host
-      - "8000:8000"
-    # volumes:
-    #   - ./backend-php:/var/www/html
+      - "8001:8001"
     environment:
-      # Sample DB connection string
-      - DATABASE_URL=postgres://nexususer:nexuspass@timescaledb:5432/nexusdb
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     depends_on:
-      - timescaledb
-    # Keeping the container alive by simply starting the built-in server or sleeping
-    command: ["php", "-S", "0.0.0.0:8000", "-t", "/var/www/html"]
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------------------
-  # 3) Python FastAPI Backend (Placeholder)
-  # ----------------------------------------------------------------------------
-  python-backend:
-    # Later replace this with your build context and Dockerfile
-    image: python:3.11-slim
-    container_name: nexus-python-backend
-    ports:
-      # Map to port 8001 on the host
-      - "8001:8000"
-    # volumes:
-    #   - ./backend-python:/app
-    environment:
-      - DATABASE_URL=postgresql://nexususer:nexuspass@timescaledb:5432/nexusdb
-    depends_on:
-      - timescaledb
-    # working_dir: /app
-    # Just running a basic HTTP server to keep the placeholder alive
-    command: ["python", "-m", "http.server", "8000"]
+      - db
+    command: ["php", "-S", "0.0.0.0:8001", "-t", "/var/www/html"]
     restart: unless-stopped
 
   # ----------------------------------------------------------------------------
   # 4) TimescaleDB (PostgreSQL Extension)
   # ----------------------------------------------------------------------------
-  timescaledb:
-    image: timescale/timescaledb:latest-pg15
-    container_name: nexus-timescaledb
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: project-nexus-db
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - POSTGRES_USER=nexususer
-      - POSTGRES_PASSWORD=nexuspass
-      - POSTGRES_DB=nexusdb
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
-      # Persistent data storage for the database
-      - timescaledb-data:/var/lib/postgresql/data
-    restart: unless-stopped
+      - timescaledb_data:/var/lib/postgresql/data
 
 volumes:
-  timescaledb-data:
+  timescaledb_data:
