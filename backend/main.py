@@ -35,3 +35,25 @@ def db_check():
             (now,) = cur.fetchone()
 
     return {"ok": True, "now": str(now)}
+
+@app.get("/zones")
+def get_zones():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        return {"ok": False, "error": "DATABASE_URL is not set"}
+
+    try:
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name FROM zones ORDER BY name;")
+                rows = cur.fetchall()
+
+        zones = [
+            {"id": row[0], "name": row[1]}
+            for row in rows
+        ]
+
+        return zones
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
