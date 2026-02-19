@@ -1,8 +1,7 @@
-import os
-
 import psycopg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from database import get_connection
 
 app = FastAPI(title="Project Nexus API")
 
@@ -17,42 +16,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
 @app.get("/db")
 def db_check():
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        return {"ok": False, "error": "DATABASE_URL is not set"}
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT now();")
+                (now,) = cur.fetchone()
 
-    with psycopg.connect(database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT now();")
-            (now,) = cur.fetchone()
+        return {"ok": True, "now": str(now)}
 
-    return {"ok": True, "now": str(now)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/zones")
 def get_zones():
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        return {"ok": False, "error": "DATABASE_URL is not set"}
-
     try:
-        with psycopg.connect(database_url) as conn:
+        with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT id, name FROM zones ORDER BY name;")
                 rows = cur.fetchall()
 
-        zones = [
-            {"id": row[0], "name": row[1]}
-            for row in rows
-        ]
-
+        zones = [{"id": row[0], "name": row[1]} for row in rows]
         return zones
 
     except Exception as e:
