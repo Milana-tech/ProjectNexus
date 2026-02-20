@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS zones (
 
 -- Create sensor_readings table
 CREATE TABLE IF NOT EXISTS sensor_readings (
-    id BIGSERIAL,
+    id BIGSERIAL PRIMARY KEY,
     metric_name VARCHAR(255) NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
     value DOUBLE PRECISION NOT NULL,
@@ -16,8 +16,7 @@ CREATE TABLE IF NOT EXISTS sensor_readings (
     anomaly_score DOUBLE PRECISION,
     anomaly_type VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
-    PRIMARY KEY (id, timestamp)
+    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE
 );
 
 -- Create forecasts table
