@@ -1,49 +1,79 @@
--- Create zones table
-CREATE TABLE IF NOT EXISTS zones (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL UNIQUE,
-    description VARCHAR(500),
+-- Create entities table (generic source, not domain-specific)
+CREATE TABLE IF NOT EXISTS entities (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create sensor_readings table
-CREATE TABLE IF NOT EXISTS sensor_readings (
+-- Create metrics table (what is being measured, linked to an entity)
+CREATE TABLE IF NOT EXISTS metrics (
     id BIGSERIAL PRIMARY KEY,
-    metric_name VARCHAR(255) NOT NULL,
+    entity_id BIGINT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    unit VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Create readings table (raw time-series data only)
+CREATE TABLE IF NOT EXISTS readings (
+    id BIGSERIAL,
     timestamp TIMESTAMPTZ NOT NULL,
     value DOUBLE PRECISION NOT NULL,
-    anomaly_flag BOOLEAN DEFAULT FALSE,
-    anomaly_score DOUBLE PRECISION,
-    anomaly_type VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE
+    metric_id BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,
+    PRIMARY KEY (id, timestamp)
 );
 
--- Create forecasts table
-CREATE TABLE IF NOT EXISTS forecasts (
+-- Create algorithms table (registry of detection/forecast algorithms)
+CREATE TABLE IF NOT EXISTS algorithms (
     id BIGSERIAL PRIMARY KEY,
-    zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
-    metric_name VARCHAR(255) NOT NULL,
-    forecast_timestamp TIMESTAMPTZ NOT NULL,
-    predicted_value DOUBLE PRECISION NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(255),
+    version VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create indexes for better query performance
-CREATE INDEX IF NOT EXISTS idx_sensor_readings_zone_id ON sensor_readings(zone_id);
-CREATE INDEX IF NOT EXISTS idx_sensor_readings_timestamp ON sensor_readings(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_sensor_readings_metric_name ON sensor_readings(metric_name);
-CREATE INDEX IF NOT EXISTS idx_sensor_readings_anomaly_flag ON sensor_readings(anomaly_flag);
-CREATE INDEX IF NOT EXISTS idx_forecasts_zone_id ON forecasts(zone_id);
-CREATE INDEX IF NOT EXISTS idx_forecasts_metric_name ON forecasts(metric_name);
-CREATE INDEX IF NOT EXISTS idx_forecasts_forecast_timestamp ON forecasts(forecast_timestamp);
+-- Create anomaly_results table (separate from readings, traceable to algorithm)
+CREATE TABLE IF NOT EXISTS anomaly_results (
+    id BIGSERIAL PRIMARY KEY,
+    metric_id BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,
+    algorithm_id BIGINT NOT NULL REFERENCES algorithms(id) ON DELETE CASCADE,
+    timestamp TIMESTAMPTZ NOT NULL,
+    anomaly_score DOUBLE PRECISION,
+    anomaly_flag BOOLEAN NOT NULL DEFAULT FALSE,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
--- Convert sensor_readings to a TimescaleDB hypertable for better time-series performance
-SELECT create_hypertable('sensor_readings', 'timestamp', if_not_exists => TRUE);
+-- Create forecast_results table (traceable to metric and algorithm)
+CREATE TABLE IF NOT EXISTS forecast_results (
+    id BIGSERIAL PRIMARY KEY,
+    metric_id BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,
+    algorithm_id BIGINT NOT NULL REFERENCES algorithms(id) ON DELETE CASCADE,
+    forecast_timestamp TIMESTAMPTZ NOT NULL,
+    predicted_value DOUBLE PRECISION NOT NULL,
+    metadata JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
--- Insert sample zones for testing
-INSERT INTO zones (name, description) VALUES
-    ('Zone A - North Greenhouse', 'Primary greenhouse north section'),
-    ('Zone B - South Greenhouse', 'Primary greenhouse south section'),
-    ('Zone C - Nursery', 'Nursery and propagation area')
-ON CONFLICT (name) DO NOTHING;
+-- Indexes for readings
+CREATE INDEX IF NOT EXISTS idx_readings_metric_id ON readings(metric_id);
+CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp DESC);
+
+-- Indexes for anomaly_results
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_metric_id ON anomaly_results(metric_id);
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_algorithm_id ON anomaly_results(algorithm_id);
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_timestamp ON anomaly_results(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_results_flag ON anomaly_results(anomaly_flag);
+
+-- Indexes for forecast_results
+CREATE INDEX IF NOT EXISTS idx_forecast_results_metric_id ON forecast_results(metric_id);
+CREATE INDEX IF NOT EXISTS idx_forecast_results_algorithm_id ON forecast_results(algorithm_id);
+CREATE INDEX IF NOT EXISTS idx_forecast_results_forecast_timestamp ON forecast_results(forecast_timestamp DESC);
+
+-- Indexes for metrics
+CREATE INDEX IF NOT EXISTS idx_metrics_entity_id ON metrics(entity_id);
+
+-- Convert readings to a TimescaleDB hypertable for time-series performance
+SELECT create_hypertable('readings', 'timestamp', if_not_exists => TRUE);
