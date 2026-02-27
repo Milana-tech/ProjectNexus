@@ -45,5 +45,22 @@ services:
     ports:
       - "5173:5173"
 
+  simulator:
+    build:
+      context: ./simulator
+    container_name: project-nexus-simulator
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SIM_ENTITY_NAME: ${SIM_ENTITY_NAME:-Greenhouse A}
+      SIM_ENTITY_TYPE: ${SIM_ENTITY_TYPE:-greenhouse}
+      SIM_METRICS: ${SIM_METRICS:-temperature,humidity}
+      SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
+      SIM_SPIKE_EVERY: ${SIM_SPIKE_EVERY:-20}
+    depends_on:
+      - db
+
 volumes:
   timescaledb_data:

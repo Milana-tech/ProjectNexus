@@ -66,7 +66,3 @@ All settings are in `.env`:
 |---|---|---|
 | `/health` | GET | Service health check |
 | `/db` | GET | Database connectivity check |
-
-## Demo
-
-See [DEMO.md](DEMO.md) for a structured 5-minute walkthrough of the full PoC.
