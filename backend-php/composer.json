@@ -1,0 +1,17 @@
+{
+  "type": "project",
+  "require": {
+    "php": ">=8.2",
+    "ext-ctype": "*",
+    "ext-iconv": "*",
+    "symfony/framework-bundle": "^7.1",
+    "symfony/runtime": "^7.1",
+    "symfony/dotenv": "^7.1",
+    "symfony/yaml": "^7.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  }
+}
