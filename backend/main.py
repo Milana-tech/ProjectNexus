@@ -1,7 +1,9 @@
-import psycopg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_connection
+
+# Load environment variables (important if running locally)
+load_dotenv()
 
 app = FastAPI(title="Project Nexus API")
 
@@ -38,10 +40,15 @@ def get_zones():
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, name FROM zones ORDER BY name;")
+                cur.execute("""
+                    SELECT DISTINCT name
+                    FROM zones
+                    ORDER BY name;
+                """)
                 rows = cur.fetchall()
 
-        zones = [{"id": row[0], "name": row[1]} for row in rows]
+        # note: this return only names as list of strings!
+        zones = [row[0] for row in rows]
         return zones
 
     except Exception as e:
