@@ -21,6 +21,7 @@ import logging
 from datetime import datetime, timezone
 
 import psycopg
+import httpx
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,13 +38,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
-ENTITY_NAME = os.getenv("SIM_ENTITY_NAME", "Greenhouse A")
-ENTITY_TYPE = os.getenv("SIM_ENTITY_TYPE", "greenhouse")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://backend:8000")
+ENTITY_NAME  = os.getenv("SIM_ENTITY_NAME", "Greenhouse A")
+ENTITY_TYPE  = os.getenv("SIM_ENTITY_TYPE", "greenhouse")
 METRIC_NAMES = [m.strip() for m in os.getenv("SIM_METRICS", "temperature,humidity").split(",") if m.strip()]
-INTERVAL = float(os.getenv("SIM_INTERVAL_SECONDS", "5"))
-SPIKE_EVERY = int(os.getenv("SIM_SPIKE_EVERY", "20"))
+INTERVAL     = float(os.getenv("SIM_INTERVAL_SECONDS", "5"))
+SPIKE_EVERY  = int(os.getenv("SIM_SPIKE_EVERY", "20"))
 
-# Realistic baseline ranges per metric name (min, max, spike_multiplier)
+# Realistic baseline ranges per metric (min, max, spike_multiplier)
 METRIC_PROFILES: dict[str, tuple[float, float, float]] = {
     "temperature": (18.0, 26.0, 2.5),
     "humidity":    (40.0, 70.0, 2.0),
@@ -58,12 +60,16 @@ def normal_value(metric: str) -> float:
 
 def spike_value(metric: str) -> float:
     lo, hi, mult = METRIC_PROFILES.get(metric, DEFAULT_PROFILE)
-    base = random.uniform(lo, hi)
-    return round(base * mult, 2)
+    return round(random.uniform(lo, hi) * mult, 2)
+
+
+def _default_unit(metric: str) -> str:
+    return {"temperature": "°C", "humidity": "%", "pressure": "hPa", "co2": "ppm"}.get(metric, "")
 
 
 # ---------------------------------------------------------------------------
-# DB bootstrap — wait for Postgres to be ready
+# DB bootstrap — wait for Postgres, create entity + metrics if needed
+# (Direct DB access only during startup; all readings go through the API)
 # ---------------------------------------------------------------------------
 
 def wait_for_db(retries: int = 20, delay: float = 3.0) -> psycopg.Connection:
@@ -84,13 +90,8 @@ def bootstrap(conn: psycopg.Connection) -> dict[str, int]:
     Returns {metric_name: metric_id}.
     """
     with conn.cursor() as cur:
-        # Upsert entity
         cur.execute(
-            """
-            INSERT INTO entities (name, type)
-            VALUES (%s, %s)
-            ON CONFLICT DO NOTHING
-            """,
+            "INSERT INTO entities (name, type) VALUES (%s, %s) ON CONFLICT DO NOTHING",
             (ENTITY_NAME, ENTITY_TYPE),
         )
         cur.execute("SELECT id FROM entities WHERE name = %s", (ENTITY_NAME,))
@@ -119,49 +120,68 @@ def bootstrap(conn: psycopg.Connection) -> dict[str, int]:
     return metric_ids
 
 
-def _default_unit(metric: str) -> str:
-    units = {"temperature": "°C", "humidity": "%", "pressure": "hPa", "co2": "ppm"}
-    return units.get(metric, "")
+# ---------------------------------------------------------------------------
+# Wait for API to be ready
+# ---------------------------------------------------------------------------
+
+def wait_for_api(retries: int = 20, delay: float = 3.0) -> None:
+    for attempt in range(1, retries + 1):
+        try:
+            r = httpx.get(f"{API_BASE_URL}/health", timeout=5)
+            if r.status_code == 200:
+                log.info("API is ready at %s", API_BASE_URL)
+                return
+        except Exception as exc:
+            log.warning("API not ready (attempt %d/%d): %s", attempt, retries, exc)
+        time.sleep(delay)
+    raise RuntimeError("API did not become ready after %d attempts." % retries)
+
+
+# ---------------------------------------------------------------------------
+# Post readings to the bulk API
+# ---------------------------------------------------------------------------
+
+def post_readings(readings: list[dict]) -> None:
+    try:
+        r = httpx.post(f"{API_BASE_URL}/readings/bulk", json={"readings": readings}, timeout=10)
+        if r.status_code == 200:
+            body = r.json()
+            log.info("API accepted: inserted=%d errors=%d", body["inserted"], len(body["errors"]))
+            for err in body["errors"]:
+                log.error("  Row error: %s", err)
+        else:
+            log.error("API rejected batch: status=%d body=%s", r.status_code, r.text[:300])
+    except Exception as exc:
+        log.error("Failed to POST readings: %s", exc)
 
 
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run_loop(conn: psycopg.Connection, metric_ids: dict[str, int]) -> None:
+def run_loop(metric_ids: dict[str, int]) -> None:
     iteration = 0
     log.info(
         "Starting insert loop — interval=%ss, spike every %s readings",
-        INTERVAL,
-        SPIKE_EVERY,
+        INTERVAL, SPIKE_EVERY,
     )
     while True:
         iteration += 1
         is_spike = (iteration % SPIKE_EVERY == 0)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc).isoformat()
 
-        with conn.cursor() as cur:
-            for metric_name, metric_id in metric_ids.items():
-                value = spike_value(metric_name) if is_spike else normal_value(metric_name)
-                cur.execute(
-                    """
-                    INSERT INTO readings (metric_id, timestamp, value, created_at)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (metric_id, now, value, now),
-                )
-                if is_spike:
-                    log.warning(
-                        "SPIKE  iteration=%-4d metric=%-15s value=%s",
-                        iteration, metric_name, value,
-                    )
-                else:
-                    log.info(
-                        "insert iteration=%-4d metric=%-15s value=%s",
-                        iteration, metric_name, value,
-                    )
-            conn.commit()
+        batch: list[dict] = []
+        for metric_name, metric_id in metric_ids.items():
+            value = spike_value(metric_name) if is_spike else normal_value(metric_name)
+            batch.append({"metric_id": metric_id, "timestamp": now, "value": value})
+            log.log(
+                logging.WARNING if is_spike else logging.INFO,
+                "%s  iter=%-4d  metric=%-15s  value=%s",
+                "SPIKE " if is_spike else "normal",
+                iteration, metric_name, value,
+            )
 
+        post_readings(batch)
         time.sleep(INTERVAL)
 
 
@@ -172,10 +192,13 @@ def run_loop(conn: psycopg.Connection, metric_ids: dict[str, int]) -> None:
 if __name__ == "__main__":
     log.info("Project Nexus simulator starting...")
     log.info(
-        "Config: entity='%s' type='%s' metrics=%s interval=%ss spike_every=%s",
-        ENTITY_NAME, ENTITY_TYPE, METRIC_NAMES, INTERVAL, SPIKE_EVERY,
+        "Config: entity='%s' type='%s' metrics=%s interval=%ss spike_every=%s api=%s",
+        ENTITY_NAME, ENTITY_TYPE, METRIC_NAMES, INTERVAL, SPIKE_EVERY, API_BASE_URL,
     )
 
     conn = wait_for_db()
     metric_ids = bootstrap(conn)
-    run_loop(conn, metric_ids)
+    conn.close()  # DB only needed for bootstrap; readings go via API
+
+    wait_for_api()
+    run_loop(metric_ids)
