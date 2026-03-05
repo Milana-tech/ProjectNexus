@@ -10,8 +10,8 @@ RUN chown -R appuser:appgroup /app
 # Switch to the non-root user
 USER appuser
 
-# Copy package manifest(s) first to leverage Docker cache; package-lock.json may be absent
-COPY --chown=appuser:appgroup package*.json ./
+# Copy package.json first to leverage Docker cache
+COPY --chown=appuser:appgroup package.json ./
 
 # Install dependencies
 RUN npm install
