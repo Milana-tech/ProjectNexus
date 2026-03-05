@@ -21,6 +21,7 @@ services:
       # These variables ensure fast refresh and file polling work gracefully in Docker
       - CHOKIDAR_USEPOLLING=true
       - WDS_SOCKET_PORT=0
+      - HOST=0.0.0.0
     restart: unless-stopped
     depends_on:
       - php-backend
