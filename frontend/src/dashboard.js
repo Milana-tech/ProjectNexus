@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -121,18 +121,23 @@ export default function GreenhouseDashboard() {
     });
   }, []);
 
-  const loadReadings = useCallback(() => {
-    if (!selectedZone) return;
-    setLoadingData(true);
-    fetchReadings(selectedZone, fromTs, toTs).then((data) => {
-      setReadings(data);
-      setLoadingData(false);
-    });
-  }, [selectedZone, fromTs, toTs]);
-
   useEffect(() => {
-    loadReadings();
-  }, [loadReadings]);
+    if (!selectedZone) return;
+    
+    let active = true;
+    setLoadingData(true);
+    
+    fetchReadings(selectedZone, fromTs, toTs).then((data) => {
+      if (active) {
+        setReadings(data);
+        setLoadingData(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedZone, fromTs, toTs]);
 
   function applyQuickRange(idx) {
     const now = Date.now();
