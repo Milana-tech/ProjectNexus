@@ -65,33 +65,46 @@ function generateTicks(from, to, count = 2) {
 }
 
 function formatTick(t, range) {
-  const d = new Date(t);
-  if (range <= 24 * 60 * 60 * 1000) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  } else {
-    return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
-  }
+  // `quickRanges` now come from backend `/config` to avoid hardcoding in the frontend
 }
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
-  const d = new Date(label);
-  return (
-    <div style={{
+    const [quickRanges, setQuickRanges] = useState([]);
+    const [activeRange, setActiveRange] = useState(0);
+    const [fromTs, setFromTs] = useState(Date.now());
+    const [toTs, setToTs] = useState(Date.now());
       background: "rgba(255,255,255,0.97)",
       border: "1px solid #e2e8f0",
       borderRadius: 10,
       padding: "10px 14px",
+    const [appTitle, setAppTitle] = useState("Project Nexus — Environmental Dashboard");
       fontSize: 13,
       color: "#1e293b",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-      backdropFilter: "blur(8px)",
-    }}>
-      <div style={{ marginBottom: 6, color: "#94a3b8", fontSize: 11, fontFamily: "Space Mono, monospace" }}>
-        {d.toLocaleString()}
-      </div>
-      {payload.map((p) => (
-        <div key={p.dataKey} style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+      // Fetch UI config and zones in parallel
+      let cfg, zres;
+      Promise.all([fetch(`${API_BASE}/config`).then((r) => r.json()), fetchZones()])
+        .then(([config, zones]) => {
+          // apply config
+          if (config?.quick_ranges) {
+            setQuickRanges(config.quick_ranges);
+            const def = Number.isInteger(config.default_range_index) ? config.default_range_index : 1;
+            setActiveRange(def);
+            const now = Date.now();
+            setToTs(now);
+            setFromTs(now - (config.quick_ranges[def]?.ms ?? 6 * 60 * 60 * 1000));
+          }
+
+          // zones
+          setZones(zones);
+          setSelectedZone(zones[0]?.id ?? "");
+          if (config?.app_title) setAppTitle(config.app_title);
+          setLoadingZones(false);
+        })
+        .catch((err) => {
+          setError("Failed to load zones or config. Please try again later.");
+          setLoadingZones(false);
+        });
           <span style={{ color: "#475569" }}>{p.name}</span>
           <strong style={{ color: p.color }}>{p.value}{p.dataKey === "temperature" ? " °C" : " %"}</strong>
         </div>
@@ -121,7 +134,7 @@ export default function GreenhouseDashboard() {
       setLoadingZones(false);
     });
   }, []);
-
+      setFromTs(now - (quickRanges[idx]?.ms ?? 6 * 60 * 60 * 1000));
   useEffect(() => {
     if (!selectedZone) return;
 
@@ -166,7 +179,7 @@ export default function GreenhouseDashboard() {
     <div className="dash">
       <div className="header">
         <div>
-          <div className="header-badge"><span className="pulse" />Live Monitor</div>
+              {quickRanges.map((r, i) => (
           <h1 style={{ marginTop: 8 }}>Project Nexus — Environmental Dashboard</h1>
         </div>
       </div>

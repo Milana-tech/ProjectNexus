@@ -88,6 +88,33 @@ def get_zones():
         return {"ok": False, "error": str(e)}
 
 
+@app.get("/config")
+def get_config():
+    """Return UI configuration values so the frontend does not hardcode them.
+
+    Provides:
+    - `app_title`: string shown in the dashboard
+    - `quick_ranges`: list of {label, ms}
+    - `default_range_index`: integer index into `quick_ranges`
+    """
+    try:
+        quick_ranges = [
+            {"label": "Last hour", "ms": 60 * 60 * 1000},
+            {"label": "Last 6 h", "ms": 6 * 60 * 60 * 1000},
+            {"label": "Last day", "ms": 24 * 60 * 60 * 1000},
+            {"label": "Last week", "ms": 7 * 24 * 60 * 60 * 1000},
+        ]
+
+        return {
+            "app_title": "Project Nexus — Environmental Dashboard",
+            "quick_ranges": quick_ranges,
+            "default_range_index": 1,
+        }
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.get("/readings/{zone_id}")
 def get_readings(
     zone_id: str = Path(..., description="Zone ID to filter readings (numeric id expected)"),
