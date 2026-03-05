@@ -112,24 +112,34 @@ export default function GreenhouseDashboard() {
   const [readings, setReadings] = useState([]);
   const [loadingZones, setLoadingZones] = useState(true);
   const [loadingData, setLoadingData] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchZones().then((z) => {
       setZones(z);
       setSelectedZone(z[0]?.id ?? "");
       setLoadingZones(false);
+    }).catch(err => {
+      setError("Failed to load zones. Please try again later.");
+      setLoadingZones(false);
     });
   }, []);
 
   useEffect(() => {
     if (!selectedZone) return;
-    
+
     let active = true;
     setLoadingData(true);
-    
+    setError(null);
+
     fetchReadings(selectedZone, fromTs, toTs).then((data) => {
       if (active) {
         setReadings(data);
+        setLoadingData(false);
+      }
+    }).catch(err => {
+      if (active) {
+        setError("Failed to load readings. Please try again later.");
         setLoadingData(false);
       }
     });
@@ -163,6 +173,12 @@ export default function GreenhouseDashboard() {
           <h1 style={{ marginTop: 8 }}>Project Nexus — Environmental Dashboard</h1>
         </div>
       </div>
+
+      {error && (
+        <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "12px 20px", borderRadius: 8, marginBottom: 20, border: "1px solid #f87171", fontFamily: "system-ui, sans-serif" }}>
+          <strong>Error:</strong> {error}
+        </div>
+      )}
 
       <div className="controls">
         <div className="control-group">
