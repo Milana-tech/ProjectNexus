@@ -48,6 +48,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -88,7 +90,7 @@ def get_zones():
 
 @app.get("/readings/{zone_id}")
 def get_readings(
-    zone_id: int = Path(..., description="Zone ID to filter readings"),
+    zone_id: str = Path(..., description="Zone ID to filter readings (numeric id expected)"),
     start: datetime = Query(None, description="Start datetime filter (ISO format)"),
     end: datetime = Query(None, description="End datetime filter (ISO format)")
 ):
@@ -99,6 +101,12 @@ def get_readings(
     - **start**: Optional start datetime (ISO 8601 format). If not provided, defaults to 24 hours ago.
     - **end**: Optional end datetime (ISO 8601 format). If not provided, defaults to now.
     """
+    # Parse zone id (accept numeric strings coming from frontend)
+    try:
+        zid = int(zone_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid zone id: {zone_id}. Expected numeric id.")
+
     # Set default values if not provided (timezone-aware UTC)
     now = datetime.now(timezone.utc)
     
@@ -116,11 +124,11 @@ def get_readings(
         )
     
     # Check if zone exists
-    if not zone_exists(zone_id):
-        raise HTTPException(status_code=404, detail=f"Zone {zone_id} not found")
+    if not zone_exists(zid):
+        raise HTTPException(status_code=404, detail=f"Zone {zid} not found")
     
     # Fetch readings from database
-    readings = fetch_readings(zone_id, start, end)
+    readings = fetch_readings(zid, start, end)
     
     # Return only the readings array (frontend expects direct array)
     return readings

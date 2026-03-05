@@ -11,39 +11,32 @@ import {
 } from "recharts";
 import "./dashboard.css";
 
-// Mock API layer
-const MOCK_ZONES = [
-  { id: "zone-a", label: "Zone A – Seedling Bay" },
-  { id: "zone-b", label: "Zone B – Propagation" },
-  { id: "zone-c", label: "Zone C – Grow Room 1" },
-  { id: "zone-d", label: "Zone D – Grow Room 2" },
-  { id: "zone-e", label: "Zone E – Harvest Hall" },
-];
-
-function generateReadings(zoneId, from, to) {
-  const seed = zoneId.charCodeAt(zoneId.length - 1);
-  const points = [];
-  const step = Math.max(Math.floor((to - from) / 80), 60_000);
-  for (let t = from; t <= to; t += step) {
-    const progress = (t - from) / (to - from);
-    const noise = () => (Math.sin(t * 0.0001 + seed) + Math.random() - 0.5) * 2;
-    points.push({
-      timestamp: t,
-      temperature: parseFloat((20 + seed * 0.3 + Math.sin(progress * Math.PI * 4 + seed) * 3 + noise()).toFixed(1)),
-      humidity: parseFloat((55 + seed * 0.5 + Math.cos(progress * Math.PI * 3 + seed) * 8 + noise()).toFixed(1)),
-    });
-  }
-  return points;
-}
+// API layer — prefer environment variable `REACT_APP_API_URL`, fallback to `VITE_API_URL` or localhost
+const API_BASE =
+  process.env.REACT_APP_API_URL || process.env.VITE_API_URL || "http://localhost:8000";
 
 async function fetchZones() {
-  return new Promise((r) => setTimeout(() => r(MOCK_ZONES), 300));
+  const res = await fetch(`${API_BASE}/zones`);
+  if (!res.ok) throw new Error(`Failed to fetch zones: ${res.statusText}`);
+  const data = await res.json();
+  // backend returns [{ id: number, name: string }]
+  return data.map((z) => ({ id: String(z.id), label: z.name }));
 }
 
 async function fetchReadings(zoneId, from, to) {
-  return new Promise((r) =>
-    setTimeout(() => r(generateReadings(zoneId, from, to)), 500)
-  );
+  const qs = new URLSearchParams({
+    start: new Date(from).toISOString(),
+    end: new Date(to).toISOString(),
+  });
+  const res = await fetch(`${API_BASE}/readings/${zoneId}?${qs.toString()}`);
+  if (!res.ok) throw new Error(`Failed to fetch readings: ${res.statusText}`);
+  const data = await res.json();
+  // Backend returns timestamps in ISO format — convert to epoch ms for the chart
+  return data.map((r) => ({
+    timestamp: new Date(r.timestamp).getTime(),
+    temperature: r.temperature,
+    humidity: r.humidity,
+  }));
 }
 
 const QUICK_RANGES = [
