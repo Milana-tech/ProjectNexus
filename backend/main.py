@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_connection
+from anomaly import zscore_detection
 
 # Load environment variables (important if running locally)
 load_dotenv()
