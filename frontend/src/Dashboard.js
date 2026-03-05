@@ -54,11 +54,15 @@ const QUICK_RANGES = [
 ];
 
 function toLocalDatetime(ts) {
+  if (!ts || isNaN(ts)) return "";
   const d = new Date(ts);
+  // Adjust for local timezone offset before converting to ISO string
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
 
 function generateTicks(from, to, count = 2) {
+  if (from >= to) return [from]; // Prevent negative or zero steps
   const ticks = [];
   const step = (to - from) / (count - 1);
   for (let i = 0; i < count; i++) {
@@ -182,11 +186,11 @@ export default function GreenhouseDashboard() {
 
       <div className="controls">
         <div className="control-group">
-          <label>Zone</label>
+          <label htmlFor="zone-select">Zone</label>
           {loadingZones ? (
-            <select disabled><option>Loading zones…</option></select>
+            <select id="zone-select" disabled><option>Loading zones…</option></select>
           ) : (
-            <select value={selectedZone} onChange={(e) => setSelectedZone(e.target.value)}>
+            <select id="zone-select" value={selectedZone} onChange={(e) => setSelectedZone(e.target.value)}>
               {zones.map((z) => <option key={z.id} value={z.id}>{z.label}</option>)}
             </select>
           )}
@@ -208,20 +212,36 @@ export default function GreenhouseDashboard() {
         <div className="divider" />
 
         <div className="control-group">
-          <label>From</label>
+          <label htmlFor="from-date">From</label>
           <input
+            id="from-date"
             type="datetime-local"
             value={toLocalDatetime(fromTs)}
-            onChange={(e) => { setActiveRange(-1); setFromTs(new Date(e.target.value).getTime()); }}
+            onChange={(e) => {
+              const ts = new Date(e.target.value).getTime();
+              if (!isNaN(ts)) {
+                setActiveRange(-1);
+                setFromTs(ts);
+                if (ts > toTs) setToTs(ts + 3600000); // Auto-push 'To' date if invalid
+              }
+            }}
           />
         </div>
 
         <div className="control-group">
-          <label>To</label>
+          <label htmlFor="to-date">To</label>
           <input
+            id="to-date"
             type="datetime-local"
             value={toLocalDatetime(toTs)}
-            onChange={(e) => { setActiveRange(-1); setToTs(new Date(e.target.value).getTime()); }}
+            onChange={(e) => {
+              const ts = new Date(e.target.value).getTime();
+              if (!isNaN(ts)) {
+                setActiveRange(-1);
+                setToTs(ts);
+                if (ts < fromTs) setFromTs(ts - 3600000); // Auto-push 'From' date if invalid
+              }
+            }}
           />
         </div>
       </div>
