@@ -76,21 +76,6 @@ def get_zones():
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-<<<<<<< HEAD
-                cur.execute("""
-                    SELECT DISTINCT name
-                    FROM zones
-                    ORDER BY name;
-                """)
-                rows = cur.fetchall()
-
-        # note: this return only names as list of strings!
-        zones = [row[0] for row in rows]
-        return zones
-
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
-=======
                 cur.execute("SELECT id, name FROM zones ORDER BY name;")
                 rows = cur.fetchall()
 
@@ -99,6 +84,7 @@ def get_zones():
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
 
 @app.get("/readings/{zone_id}")
 def get_readings(
@@ -138,4 +124,3 @@ def get_readings(
     
     # Return only the readings array (frontend expects direct array)
     return readings
->>>>>>> origin/feature/miriam/readings-endpoint
