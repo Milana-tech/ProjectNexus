@@ -40,11 +40,13 @@ services:
     env_file:
       - .env
     environment:
-      VITE_API_URL: ${VITE_API_URL}
+      - VITE_API_URL=${VITE_API_URL}
+      - HOST=0.0.0.0
+      - PORT=3000
     depends_on:
       - backend
     ports:
-      - "5173:5173"
+      - "3000:3000"
 
   php-backend:
     image: php:8.2-fpm-alpine
