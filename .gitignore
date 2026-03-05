@@ -17,10 +17,14 @@ htmlcov/
 node_modules/
 .pnp/
 .pnp.js
+package-lock.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# CRA boilerplate files we don't need
+frontend/README.md
 
 # Build outputs
 build/
