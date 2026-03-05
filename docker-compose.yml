@@ -1,65 +1,7 @@
 name: project-nexus
 
 services:
-  # ----------------------------------------------------------------------------
-  # 1) React Frontend (CRA)
-  # ----------------------------------------------------------------------------
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: project-nexus-frontend
-    ports:
-      - "3000:3000"
-    volumes:
-      # Mount the local codebase over the container's app directory for hot-reloading
-      - ./frontend:/app
-      # Prevent local node_modules from overwriting the container's
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-      - CHOKIDAR_USEPOLLING=true
-      - WDS_SOCKET_PORT=0
-      - REACT_APP_API_URL=${VITE_API_URL:-http://localhost:8000}
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------------------
-  # 2) Python FastAPI Backend
-  # ----------------------------------------------------------------------------
-  backend:
-    build:
-      context: ./backend
-    container_name: project-nexus-backend
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-    depends_on:
-      - db
-    ports:
-      - "8000:8000"
-
-  # ----------------------------------------------------------------------------
-  # 3) PHP Symfony Backend (Placeholder)
-  # ----------------------------------------------------------------------------
-  php-backend:
-    image: php:8.2-fpm-alpine
-    container_name: nexus-php-backend
-    ports:
-      - "8001:8001"
-    environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-    depends_on:
-      - db
-    command: ["php", "-S", "0.0.0.0:8001", "-t", "/var/www/html"]
-    restart: unless-stopped
-
-  # ----------------------------------------------------------------------------
-  # 4) TimescaleDB (PostgreSQL Extension)
-  # ----------------------------------------------------------------------------
+  # Database service (TimescaleDB/Postgres)
   db:
     image: timescale/timescaledb:latest-pg16
     container_name: project-nexus-db
@@ -74,6 +16,96 @@ services:
       - "5432:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d
+
+  backend:
+    build:
+      context: ./backend
+    container_name: project-nexus-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: project-nexus-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
+  # Optional placeholder PHP backend
+  php-backend:
+    image: php:8.2-fpm-alpine
+    container_name: nexus-php-backend
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      - db
+    command: ["php", "-S", "0.0.0.0:8001", "-t", "/var/www/html"]
+    restart: unless-stopped
+>>>>>>> origin/feature/miriam/readings-endpoint
+  db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: project-nexus-db
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+<<<<<<< HEAD
+=======
+      - ./sql:/docker-entrypoint-initdb.d
+
+  backend:
+    build:
+      context: ./backend
+    container_name: project-nexus-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: project-nexus-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      VITE_API_URL: ${VITE_API_URL}
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+>>>>>>> origin/feature/miriam/readings-endpoint
 
 volumes:
   timescaledb_data:
