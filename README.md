@@ -52,10 +52,6 @@ Backups
 - Use `pg_dump` to export data before removing volumes:
 	- `docker compose exec db pg_dump -U $POSTGRES_USER -d $POSTGRES_DB > backup.sql`
 
-If you want I can:
-- Add a small admin endpoint to the backend to (re)seed sample readings on demand, or
-- Add an idempotent seeding step into `sql/001_init_schema.sql` so sensor readings are present on fresh volumes.
-
 Idempotent seeding
 - The `sql/001_init_schema.sql` file now includes an idempotent seeding step: when the database is initialized (or when the init scripts run) it will insert sample `sensor_readings` only if the `sensor_readings` table is empty. This prevents duplicate data if the init scripts are applied multiple times and makes it safe to recreate the database during development.
 
