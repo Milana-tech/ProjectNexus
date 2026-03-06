@@ -32,10 +32,10 @@ The defaults work out of the box. Edit `.env` to customise the simulator entity/
 docker compose up --build
 ```
 
-This starts all four services in one command:
+This starts all services in one command:
 - **Database** on `localhost:5432`
 - **API** on `http://localhost:8000`
-- **Frontend** on `http://localhost:5173`
+- **Frontend** on `http://localhost:3000`
 - **Simulator** — inserts a reading every 5 seconds; injects a spike every 20 readings
 
 ### 3. Stop and clean up
@@ -67,7 +67,28 @@ All settings are in `.env`:
 |---|---|---|
 | `/health` | GET | Service health check |
 | `/db` | GET | Database connectivity check |
+| `/zones` | GET | List all zones |
+| `/config` | GET | UI configuration (title, time ranges) |
+| `/readings/{zone_id}` | GET | Zone readings with optional `start`/`end` filters |
+| `/readings` | GET | Metric readings with optional filters |
+| `/readings/bulk` | POST | Ingest a batch of readings (used by simulator) |
 
 ## Demo
 
 See [DEMO.md](DEMO.md) for a structured 5-minute walkthrough of the full PoC.
+
+## Useful DB commands
+
+```bash
+# Connect to DB
+docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB
+
+# Show tables
+SELECT table_name FROM information_schema.tables WHERE table_schema='public';
+
+# List zones
+SELECT id, name FROM zones ORDER BY id;
+
+# Recent readings
+SELECT * FROM readings ORDER BY timestamp DESC LIMIT 10;
+```

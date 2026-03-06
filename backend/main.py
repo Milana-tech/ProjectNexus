@@ -1,12 +1,12 @@
 import os
 import logging
 import math
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Any
 
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -24,6 +24,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -39,7 +41,7 @@ def get_conn() -> psycopg.Connection:
 
 
 # ---------------------------------------------------------------------------
-# Existing endpoints (preserved)
+# Health / DB check
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
@@ -52,17 +54,53 @@ def db_check():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         return {"ok": False, "error": "DATABASE_URL is not set"}
-
-    with psycopg.connect(database_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT now();")
-            (now,) = cur.fetchone()
-
-    return {"ok": True, "now": str(now)}
+    try:
+        with psycopg.connect(database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT now();")
+                (now,) = cur.fetchone()
+        return {"ok": True, "now": str(now)}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
-# Models
+# Zones
+# ---------------------------------------------------------------------------
+
+@app.get("/zones")
+def get_zones():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name FROM zones ORDER BY name;")
+                rows = cur.fetchall()
+        return [{"id": row["id"], "name": row["name"]} for row in rows]
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# UI config
+# ---------------------------------------------------------------------------
+
+@app.get("/config")
+def get_config():
+    """Return UI configuration values so the frontend does not hardcode them."""
+    return {
+        "app_title": "Project Nexus — Environmental Dashboard",
+        "quick_ranges": [
+            {"label": "Last hour", "ms": 60 * 60 * 1000},
+            {"label": "Last 6 h", "ms": 6 * 60 * 60 * 1000},
+            {"label": "Last day", "ms": 24 * 60 * 60 * 1000},
+            {"label": "Last week", "ms": 7 * 24 * 60 * 60 * 1000},
+        ],
+        "default_range_index": 1,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Models for bulk ingest
 # ---------------------------------------------------------------------------
 
 class Reading(BaseModel):
@@ -112,7 +150,7 @@ class BulkReadingsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# POST /readings/bulk — ingest time-series readings
+# POST /readings/bulk — ingest time-series readings (used by simulator)
 # ---------------------------------------------------------------------------
 
 @app.post(
@@ -187,10 +225,75 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
 
 
 # ---------------------------------------------------------------------------
-# GET /readings — universal time-series query
+# GET /readings/{zone_id} — zone-based query (used by frontend)
 # ---------------------------------------------------------------------------
 
-@app.get("/readings", summary="Query time-series readings")
+@app.get("/readings/{zone_id}", summary="Query readings for a zone")
+def get_readings_by_zone(
+    zone_id: str = Path(..., description="Zone ID (numeric)"),
+    start: Optional[datetime] = Query(None, description="Start datetime (ISO 8601)"),
+    end: Optional[datetime] = Query(None, description="End datetime (ISO 8601)"),
+) -> list[dict[str, Any]]:
+    """
+    Returns readings for all metrics in a zone, ordered by timestamp ascending.
+    Defaults to the last 24 hours if no range is provided.
+    """
+    try:
+        zid = int(zone_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid zone id: {zone_id}. Expected numeric id.")
+
+    now_utc = datetime.now(timezone.utc)
+    if start is None:
+        start = now_utc - timedelta(hours=24)
+    if end is None:
+        end = now_utc
+
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+
+    if start > end:
+        raise HTTPException(
+            status_code=400,
+            detail=f"start ({start.isoformat()}) must be before end ({end.isoformat()})",
+        )
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM zones WHERE id = %s", (zid,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail=f"Zone {zid} not found")
+
+            cur.execute(
+                """
+                SELECT r.timestamp, m.name AS metric, r.value
+                FROM readings r
+                JOIN metrics m ON m.id = r.metric_id
+                WHERE r.zone_id = %s
+                  AND r.timestamp BETWEEN %s AND %s
+                ORDER BY r.timestamp ASC
+                """,
+                (zid, start, end),
+            )
+            rows = cur.fetchall()
+
+    return [
+        {
+            "timestamp": row["timestamp"].isoformat(),
+            "metric": row["metric"],
+            "value": row["value"],
+        }
+        for row in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /readings — metric-based query (used by API consumers / tests)
+# ---------------------------------------------------------------------------
+
+@app.get("/readings", summary="Query time-series readings by metric")
 def get_readings(
     metric_id: int = Query(..., gt=0, description="Metric to query"),
     start: Optional[datetime] = Query(None, description="Start timestamp, inclusive (ISO-8601)"),
