@@ -54,8 +54,9 @@ All settings are in `.env`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `SIM_ENTITY_NAME` | `Greenhouse A` | Name of the demo entity |
-| `SIM_ENTITY_TYPE` | `greenhouse` | Type of the demo entity |
+| `SIM_ZONE_NAME` | `Zone 1` | Name of the demo zone |
+| `SIM_DEVICE_NAME` | `Greenhouse A` | Name of the demo device |
+| `SIM_DEVICE_TYPE` | `greenhouse` | Type of the demo device |
 | `SIM_METRICS` | `temperature,humidity` | Comma-separated metric names |
 | `SIM_INTERVAL_SECONDS` | `5` | Seconds between reading inserts |
 | `SIM_SPIKE_EVERY` | `20` | Inject an anomalous spike every N readings |

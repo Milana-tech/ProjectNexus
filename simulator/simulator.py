@@ -1,14 +1,15 @@
 """
 Project Nexus — Data Simulator
 
-Ensures demo entity + metrics exist, then continuously inserts readings.
+Ensures demo zone + device + metrics exist, then continuously inserts readings.
 Every SIM_SPIKE_EVERY iterations it injects an obvious spike so the
 anomaly detection algorithm has something to find.
 
 Configuration (all via environment variables):
   DATABASE_URL         Postgres connection string (required)
-  SIM_ENTITY_NAME      Name of the demo entity          (default: Greenhouse A)
-  SIM_ENTITY_TYPE      Type of the demo entity          (default: greenhouse)
+  SIM_ZONE_NAME        Name of the demo zone            (default: Zone 1)
+  SIM_DEVICE_NAME      Name of the demo device          (default: Greenhouse A)
+  SIM_DEVICE_TYPE      Type of the demo device          (default: greenhouse)
   SIM_METRICS          Comma-separated metric names     (default: temperature,humidity)
   SIM_INTERVAL_SECONDS Seconds between readings         (default: 5)
   SIM_SPIKE_EVERY      Insert a spike every N readings  (default: 20)
@@ -39,8 +40,9 @@ if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://backend:8000")
-ENTITY_NAME  = os.getenv("SIM_ENTITY_NAME", "Greenhouse A")
-ENTITY_TYPE  = os.getenv("SIM_ENTITY_TYPE", "greenhouse")
+ZONE_NAME    = os.getenv("SIM_ZONE_NAME", "Zone 1")
+DEVICE_NAME  = os.getenv("SIM_DEVICE_NAME", "Greenhouse A")
+DEVICE_TYPE  = os.getenv("SIM_DEVICE_TYPE", "greenhouse")
 METRIC_NAMES = [m.strip() for m in os.getenv("SIM_METRICS", "temperature,humidity").split(",") if m.strip()]
 INTERVAL     = float(os.getenv("SIM_INTERVAL_SECONDS", "5"))
 SPIKE_EVERY  = int(os.getenv("SIM_SPIKE_EVERY", "20"))
@@ -86,31 +88,48 @@ def wait_for_db(retries: int = 20, delay: float = 3.0) -> psycopg.Connection:
 
 def bootstrap(conn: psycopg.Connection) -> dict[str, int]:
     """
-    Ensure the entity and all metrics exist.
+    Ensure the zone, device, and all metrics exist.
     Returns {metric_name: metric_id}.
     """
     with conn.cursor() as cur:
+        # Upsert zone
         cur.execute(
-            "INSERT INTO entities (name, type) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-            (ENTITY_NAME, ENTITY_TYPE),
+            "INSERT INTO zones (name) VALUES (%s) ON CONFLICT (name) DO NOTHING",
+            (ZONE_NAME,),
         )
-        cur.execute("SELECT id FROM entities WHERE name = %s", (ENTITY_NAME,))
-        (entity_id,) = cur.fetchone()
-        log.info("Entity '%s' (type=%s) id=%d", ENTITY_NAME, ENTITY_TYPE, entity_id)
+        cur.execute("SELECT id FROM zones WHERE name = %s", (ZONE_NAME,))
+        (zone_id,) = cur.fetchone()
+        log.info("Zone '%s' id=%d", ZONE_NAME, zone_id)
+
+        # Upsert device
+        cur.execute(
+            """
+            INSERT INTO devices (zone_id, name, type)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (zone_id, name) DO NOTHING
+            """,
+            (zone_id, DEVICE_NAME, DEVICE_TYPE),
+        )
+        cur.execute(
+            "SELECT id FROM devices WHERE zone_id = %s AND name = %s",
+            (zone_id, DEVICE_NAME),
+        )
+        (device_id,) = cur.fetchone()
+        log.info("Device '%s' (type=%s) id=%d", DEVICE_NAME, DEVICE_TYPE, device_id)
 
         metric_ids: dict[str, int] = {}
         for metric_name in METRIC_NAMES:
             cur.execute(
                 """
-                INSERT INTO metrics (entity_id, name, unit)
+                INSERT INTO metrics (device_id, name, unit)
                 VALUES (%s, %s, %s)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (device_id, name) DO NOTHING
                 """,
-                (entity_id, metric_name, _default_unit(metric_name)),
+                (device_id, metric_name, _default_unit(metric_name)),
             )
             cur.execute(
-                "SELECT id FROM metrics WHERE entity_id = %s AND name = %s",
-                (entity_id, metric_name),
+                "SELECT id FROM metrics WHERE device_id = %s AND name = %s",
+                (device_id, metric_name),
             )
             (metric_id,) = cur.fetchone()
             metric_ids[metric_name] = metric_id
@@ -192,8 +211,8 @@ def run_loop(metric_ids: dict[str, int]) -> None:
 if __name__ == "__main__":
     log.info("Project Nexus simulator starting...")
     log.info(
-        "Config: entity='%s' type='%s' metrics=%s interval=%ss spike_every=%s api=%s",
-        ENTITY_NAME, ENTITY_TYPE, METRIC_NAMES, INTERVAL, SPIKE_EVERY, API_BASE_URL,
+        "Config: zone='%s' device='%s' type='%s' metrics=%s interval=%ss spike_every=%s api=%s",
+        ZONE_NAME, DEVICE_NAME, DEVICE_TYPE, METRIC_NAMES, INTERVAL, SPIKE_EVERY, API_BASE_URL,
     )
 
     conn = wait_for_db()

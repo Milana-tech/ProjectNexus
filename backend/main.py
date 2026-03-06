@@ -137,11 +137,19 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
 
     with get_conn() as conn:
         with conn.cursor() as cur:
-            # Validate all metric_ids in a single query
+            # Validate all metric_ids and resolve zone_id via metric→device→zone
             unique_ids = list({r.metric_id for r in body.readings})
-            cur.execute("SELECT id FROM metrics WHERE id = ANY(%s)", (unique_ids,))
-            valid_ids = {row["id"] for row in cur.fetchall()}
-            unknown = set(unique_ids) - valid_ids
+            cur.execute(
+                """
+                SELECT m.id AS metric_id, d.zone_id
+                FROM metrics m
+                JOIN devices d ON d.id = m.device_id
+                WHERE m.id = ANY(%s)
+                """,
+                (unique_ids,),
+            )
+            metric_zone_map = {row["metric_id"]: row["zone_id"] for row in cur.fetchall()}
+            unknown = set(unique_ids) - set(metric_zone_map)
             if unknown:
                 raise HTTPException(
                     status_code=422,
@@ -156,10 +164,16 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
                 try:
                     cur.execute(
                         """
-                        INSERT INTO readings (metric_id, timestamp, value, created_at)
-                        VALUES (%s, %s, %s, %s)
+                        INSERT INTO readings (metric_id, zone_id, timestamp, value, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
                         """,
-                        (reading.metric_id, reading.timestamp, reading.value, now),
+                        (
+                            reading.metric_id,
+                            metric_zone_map[reading.metric_id],
+                            reading.timestamp,
+                            reading.value,
+                            now,
+                        ),
                     )
                     inserted += 1
                 except Exception as exc:

@@ -47,10 +47,10 @@ docker logs project-nexus-simulator
 ```
 
 **What to point out:**
-- On first startup, the simulator created one **entity** ("Greenhouse A", type = greenhouse).
-- It registered two **metrics** linked to that entity: `temperature` (°C) and `humidity` (%).
+- On first startup, the simulator created one **zone** ("Zone 1") and one **device** ("Greenhouse A", type = greenhouse) inside it.
+- It registered two **metrics** linked to that device: `temperature` (°C) and `humidity` (%).
 - It is now inserting a new reading every 5 seconds for each metric.
-- The entity name, type, and metrics are all configurable via environment variables — not hardcoded.
+- The zone, device, and metrics are all configurable via environment variables — not hardcoded.
 
 ---
 
@@ -75,15 +75,17 @@ docker exec project-nexus-db psql -U nexus -d nexus -c \
 
 ```bash
 docker exec project-nexus-db psql -U nexus -d nexus -c \
-  "SELECT e.name AS entity, e.type, m.name AS metric, m.unit
-   FROM entities e
-   JOIN metrics m ON m.entity_id = e.id;"
+  "SELECT z.name AS zone, d.name AS device, d.type, m.name AS metric, m.unit
+   FROM zones z
+   JOIN devices d ON d.zone_id = z.id
+   JOIN metrics m ON m.device_id = d.id;"
 ```
 
 **What to point out:**
-- `entities` is generic — type can be greenhouse, factory, lab, etc.
-- `metrics` are linked to an entity and carry a unit.
-- Swapping to a different domain requires only inserting a new entity row — no schema change.
+- `zones` is generic — can represent a room, floor, greenhouse bay, factory cell, etc.
+- `devices` are linked to a zone and carry a type.
+- `metrics` are linked to a device and carry a unit.
+- Swapping to a different domain requires only inserting a new zone/device row — no schema change.
 
 ---
 
