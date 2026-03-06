@@ -4,16 +4,14 @@ CREATE TABLE IF NOT EXISTS zones
     name TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS metrics 
-(
+CREATE TABLE IF NOT EXISTS metrics (
     id SERIAL PRIMARY KEY,
     metric_id TEXT NOT NULL,
     timestamp TIMESTAMP NOT NULL,
     value DOUBLE PRECISION
 );
 
-CREATE TABLE IF NOT EXISTS anomaly_results
- (
+CREATE TABLE IF NOT EXISTS anomaly_results (
     id SERIAL PRIMARY KEY,
     metric_id TEXT,
     algorithm_id TEXT,
@@ -33,8 +31,8 @@ INSERT INTO metrics (metric_id, timestamp, value) VALUES
 ('temperature', NOW() - INTERVAL '8 minutes', 20),
 ('temperature', NOW() - INTERVAL '7 minutes', 22),
 ('temperature', NOW() - INTERVAL '6 minutes', 21),
-('temperature', NOW() - INTERVAL '5 minutes', 50), -- anomaly!
+('temperature', NOW() - INTERVAL '5 minutes', 50), -- anomaly
 ('temperature', NOW() - INTERVAL '4 minutes', 20),
 ('temperature', NOW() - INTERVAL '3 minutes', 21),
 ('temperature', NOW() - INTERVAL '2 minutes', 19),
-('temperature', NOW() - INTERVAL '1 minutes', 60); -- anomaly!
+('temperature', NOW() - INTERVAL '1 minutes', 60); -- anomaly

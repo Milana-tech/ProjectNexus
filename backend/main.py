@@ -1,3 +1,4 @@
+from anomaly import zscore_detection
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import get_connection
@@ -54,3 +55,78 @@ def get_zones():
 
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+@app.post("/anomalies/run")
+def run_anomaly(metric_id: str, algorithm: str, start: str, end: str):
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute("""
+                    SELECT timestamp, value
+                    FROM metrics
+                    WHERE metric_id = %s
+                    AND timestamp BETWEEN %s AND %s
+                    ORDER BY timestamp
+                """, (metric_id, start, end))
+
+                rows = cur.fetchall()
+
+        timestamps = [r[0] for r in rows]
+        values = [r[1] for r in rows]
+
+        results = zscore_detection(values)
+
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+
+                for i, r in enumerate(results):
+
+                    cur.execute("""
+                        INSERT INTO anomaly_results
+                        (metric_id, algorithm_id, timestamp, score, flag)
+                        VALUES (%s,%s,%s,%s,%s)
+                    """, (
+                        metric_id,
+                        algorithm,
+                        timestamps[i],
+                        r["score"],
+                        r["flag"]
+                    ))
+
+        return {"status": "done", "points_processed": len(results)}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/anomalies")
+def get_anomalies(metric_id: str, start: str, end: str):
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+
+                cur.execute("""
+                    SELECT timestamp, score, flag
+                    FROM anomaly_results
+                    WHERE metric_id = %s
+                    AND timestamp BETWEEN %s AND %s
+                    ORDER BY timestamp
+                """, (metric_id, start, end))
+
+                rows = cur.fetchall()
+
+        results = []
+
+        for r in rows:
+            results.append({
+                "timestamp": str(r[0]),
+                "score": r[1],
+                "flag": r[2]
+            })
+
+        return results
+
+    except Exception as e:
+        return {"error": str(e)}
