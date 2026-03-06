@@ -31,3 +31,23 @@ VALUES
   ('Zone B', 'Test zone B'),
   ('Zone C', 'Test zone C')
 ON CONFLICT (name) DO NOTHING;
+
+-- Idempotent seeding for sensor_readings: only insert sample readings
+-- when the table is empty. This keeps the init script safe to run
+-- multiple times without duplicating data.
+DO $$
+DECLARE
+  z RECORD;
+BEGIN
+  IF (SELECT COUNT(*) FROM sensor_readings) = 0 THEN
+    FOR z IN SELECT id FROM zones LOOP
+      INSERT INTO sensor_readings (zone_id, timestamp, temperature, humidity)
+      SELECT z.id,
+             (now() - interval '24 hours') + (g * interval '1 hour'),
+             round((20 + random() * 4)::numeric, 1),
+             round((50 + random() * 8)::numeric, 1)
+      FROM generate_series(0, 23) AS g;
+    END LOOP;
+  END IF;
+END
+$$;

@@ -55,3 +55,9 @@ Backups
 If you want I can:
 - Add a small admin endpoint to the backend to (re)seed sample readings on demand, or
 - Add an idempotent seeding step into `sql/001_init_schema.sql` so sensor readings are present on fresh volumes.
+
+Idempotent seeding
+- The `sql/001_init_schema.sql` file now includes an idempotent seeding step: when the database is initialized (or when the init scripts run) it will insert sample `sensor_readings` only if the `sensor_readings` table is empty. This prevents duplicate data if the init scripts are applied multiple times and makes it safe to recreate the database during development.
+
+Notes
+- If you want to force a fresh initialization (and run the init scripts from scratch), you must remove the DB Docker volume first (see steps above). Otherwise the init scripts will be skipped because the DB data directory is present.
