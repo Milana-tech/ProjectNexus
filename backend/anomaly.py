@@ -20,4 +20,16 @@ def zscore_detection(values, threshold=3):
             "flag": flag
         })
 
-    return results
+    return results        
+
+ALGORITHMS = {
+    "zscore": zscore_detection,
+}
+
+def get_algorithm(name: str):
+    if name not in ALGORITHMS:
+        raise ValueError(
+            f"Unknown algorithm: '{name}'. Available: {list(ALGORITHMS.keys())}"
+        )
+        
+    return ALGORITHMS[name]

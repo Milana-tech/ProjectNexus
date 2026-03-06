@@ -1,8 +1,11 @@
 import psycopg
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
+from typing import Any
 from database import get_connection
+from anomaly import get_algorithm 
 
 app = FastAPI(title="Project Nexus API")
 
@@ -160,12 +163,26 @@ def get_readings(
     return readings
 
 @app.post("/anomalies/run")
-def run_anomaly(metric_id: str, algorithm: str, start: str, end: str):
+def run_anomaly(
+    metric_id: str = Query(..., description="Metric ID to run detection on"),
+    algorithm: str = Query(..., description="Algorithm name, e.g. 'zscore'"),
+    start: datetime = Query(..., description="Start datetime"),
+    end: datetime   = Query(..., description="End datetime"),
+):
+    # Validate algorithm exists
+    try:
+        fn = get_algorithm(algorithm)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
+    # Validate time range
+    if start >= end:
+        raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+
+    # Fetch data
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-
                 cur.execute("""
                     SELECT timestamp, value
                     FROM metrics
@@ -173,43 +190,50 @@ def run_anomaly(metric_id: str, algorithm: str, start: str, end: str):
                     AND timestamp BETWEEN %s AND %s
                     ORDER BY timestamp
                 """, (metric_id, start, end))
-
                 rows = cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-        timestamps = [r[0] for r in rows]
-        values = [r[1] for r in rows]
+    # Validate metric has data
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No data found for metric_id '{metric_id}' in the given time range"
+        )
 
-        results = zscore_detection(values)
+    timestamps = [r[0] for r in rows]
+    values     = [r[1] for r in rows]
 
+    # Run the algorithm
+    results = fn(values)
+
+    # Store results
+    try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-
                 for i, r in enumerate(results):
-
                     cur.execute("""
                         INSERT INTO anomaly_results
                         (metric_id, algorithm_id, timestamp, score, flag)
-                        VALUES (%s,%s,%s,%s,%s)
-                    """, (
-                        metric_id,
-                        algorithm,
-                        timestamps[i],
-                        r["score"],
-                        r["flag"]
-                    ))
-
-        return {"status": "done", "points_processed": len(results)}
-
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (metric_id, algorithm, timestamps[i], r["score"], r["flag"]))
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
+
+    return {"status": "done", "points_processed": len(results)}
 
 @app.get("/anomalies")
-def get_anomalies(metric_id: str, start: str, end: str):
+def get_anomalies(
+    metric_id: str      = Query(..., description="Metric ID to retrieve results for"),
+    start: datetime     = Query(..., description="Start datetime"),
+    end: datetime       = Query(..., description="End datetime"),
+):
+    if start >= end:
+        raise HTTPException(status_code=400, detail="'start' must be before 'end'")
 
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
-
                 cur.execute("""
                     SELECT timestamp, score, flag
                     FROM anomaly_results
@@ -217,19 +241,11 @@ def get_anomalies(metric_id: str, start: str, end: str):
                     AND timestamp BETWEEN %s AND %s
                     ORDER BY timestamp
                 """, (metric_id, start, end))
-
                 rows = cur.fetchall()
-
-        results = []
-
-        for r in rows:
-            results.append({
-                "timestamp": str(r[0]),
-                "score": r[1],
-                "flag": r[2]
-            })
-
-        return results
-
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    return [
+        {"timestamp": str(r[0]), "score": r[1], "flag": r[2]}
+        for r in rows
+    ]
