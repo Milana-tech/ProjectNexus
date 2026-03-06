@@ -1,61 +1,94 @@
 # Project Nexus
 
+Proof-of-concept anomaly detection system for time-series data.
+Stores measurements in a generic format, detects anomalies using statistical methods,
+and visualises results through a basic dashboard.
+
+## Stack
+
+| Service | Description |
+|---|---|
+| `db` | TimescaleDB (PostgreSQL) — time-series storage |
+| `backend` | FastAPI — REST ingestion + anomaly detection API |
+| `frontend` | React + Vite — dashboard |
+| `simulator` | Python — continuously inserts fake readings for demo/testing |
+
 ## Getting started
 
-1. Install Docker Desktop.
-2. Start the stack:
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
+
+### 1. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+The defaults work out of the box. Edit `.env` to customise the simulator entity/metrics.
+
+### 2. Start the full stack
 
 ```bash
 docker compose up --build
 ```
 
-## Services & Ports
+This starts all services in one command:
+- **Database** on `localhost:5432`
+- **API** on `http://localhost:8000`
+- **Frontend** on `http://localhost:3000`
+- **Simulator** — inserts a reading every 5 seconds; injects a spike every 20 readings
 
-Once the Docker stack starts, you can access the following services:
+### 3. Stop and clean up
 
-- **Frontend Dashboard (React)**: [http://localhost:3000](http://localhost:3000)
-- **PHP Backend**: [http://localhost:8000](http://localhost:8000)
-- **Python Backend (FastAPI)**: [http://localhost:8001](http://localhost:8001)
-- **TimescaleDB (PostgreSQL)**: `localhost:5432` (Login: `nexususer` / `nexuspass`)
+```bash
+# Stop containers (keeps data)
+docker compose down
 
-## Database details & persistence
+# Stop and wipe database volume (fresh start)
+docker compose down -v
+```
 
-- The project uses TimescaleDB (a PostgreSQL distribution with time-series extensions). The Compose service is `timescale/timescaledb:latest-pg16` so this is not MySQL.
-- Data is persisted to a Docker volume (look for a volume named like `project-nexus_timescaledb_data`). The Postgres data directory is mounted at `/var/lib/postgresql/data` inside the container.
+## Simulator configuration
 
-How init scripts work
-- The folder `./sql` is mounted into the container's `/docker-entrypoint-initdb.d`. Any `*.sql` files there will run only when the database is first initialized (i.e., when the data directory is empty). That means the `sql/001_init_schema.sql` file will create tables and insert seed rows only on first startup.
+All settings are in `.env`:
 
-Why you may lose data
-- If you recreate the database container but reuse the same Docker volume, your data will stay intact.
-- If you remove the Docker volume (or Docker Compose is run on a different machine or project name), the data directory will be empty and the init scripts will run again — or if the init scripts do not include full seeding of `sensor_readings`, you may see no sample readings.
+| Variable | Default | Description |
+|---|---|---|
+| `SIM_ZONE_NAME` | `Zone 1` | Name of the demo zone |
+| `SIM_DEVICE_NAME` | `Greenhouse A` | Name of the demo device |
+| `SIM_DEVICE_TYPE` | `greenhouse` | Type of the demo device |
+| `SIM_METRICS` | `temperature,humidity` | Comma-separated metric names |
+| `SIM_INTERVAL_SECONDS` | `5` | Seconds between reading inserts |
+| `SIM_SPIKE_EVERY` | `20` | Inject an anomalous spike every N readings |
 
-Useful commands
-- List volumes:
-	- `docker volume ls`
-- Inspect the project volume (replace name shown by `docker volume ls`):
-	- `docker volume inspect project-nexus_timescaledb_data`
-- Connect to the DB with psql (from host, if port mapped):
-	- `docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB`
-- Show tables / data:
-	- `SELECT table_name FROM information_schema.tables WHERE table_schema='public';`
-	- `SELECT id,name FROM zones ORDER BY id;`
-	- `SELECT count(*) FROM sensor_readings;`
-- Seed sample readings (one-off, from host):
-	- `docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB -c "INSERT INTO sensor_readings (zone_id,timestamp,temperature,humidity) SELECT 1, (now() - interval '24 hours') + (g * interval '1 hour'), round((20 + random()*4)::numeric,1), round((50 + random()*8)::numeric,1) FROM generate_series(0,23) AS g;"`
-- To force the init scripts to re-run (WARNING: this deletes all DB data):
-	1. `docker compose down`
- 2. Remove the volume: `docker volume rm project-nexus_timescaledb_data`
- 3. `docker compose up --build` (the `./sql/*.sql` files will run on first init)
+## API
 
-Backups
-- Use `pg_dump` to export data before removing volumes:
-	- `docker compose exec db pg_dump -U $POSTGRES_USER -d $POSTGRES_DB > backup.sql`
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Service health check |
+| `/db` | GET | Database connectivity check |
+| `/zones` | GET | List all zones |
+| `/config` | GET | UI configuration (title, time ranges) |
+| `/readings/{zone_id}` | GET | Zone readings with optional `start`/`end` filters |
+| `/readings` | GET | Metric readings with optional filters |
+| `/readings/bulk` | POST | Ingest a batch of readings (used by simulator) |
 
-Idempotent seeding
-- The `sql/001_init_schema.sql` file now includes an idempotent seeding step: when the database is initialized (or when the init scripts run) it will insert sample `sensor_readings` only if the `sensor_readings` table is empty. This prevents duplicate data if the init scripts are applied multiple times and makes it safe to recreate the database during development.
+## Demo
 
-- The seeding now inserts a full month (30 days) of hourly sample readings per zone, ending at the initialization time. That gives a continuous dataset you can use to demonstrate last-hour / last-day / last-week views without manual reseeding.
+See [DEMO.md](DEMO.md) for a structured 5-minute walkthrough of the full PoC.
 
-Notes
-- If you want to force a fresh initialization (and run the init scripts from scratch), you must remove the DB Docker volume first (see steps above). Otherwise the init scripts will be skipped because the DB data directory is present.
+## Useful DB commands
+
+```bash
+# Connect to DB
+docker compose exec db psql -U $POSTGRES_USER -d $POSTGRES_DB
+
+# Show tables
+SELECT table_name FROM information_schema.tables WHERE table_schema='public';
+
+# List zones
+SELECT id, name FROM zones ORDER BY id;
+
+# Recent readings
+SELECT * FROM readings ORDER BY timestamp DESC LIMIT 10;
+```
