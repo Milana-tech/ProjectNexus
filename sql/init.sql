@@ -31,8 +31,8 @@ INSERT INTO metrics (metric_id, timestamp, value) VALUES
 ('temperature', NOW() - INTERVAL '8 minutes', 20),
 ('temperature', NOW() - INTERVAL '7 minutes', 22),
 ('temperature', NOW() - INTERVAL '6 minutes', 21),
-('temperature', NOW() - INTERVAL '5 minutes', 200), -- anomaly value
+('temperature', NOW() - INTERVAL '5 minutes', 200), -- anomaly
 ('temperature', NOW() - INTERVAL '4 minutes', 20),
 ('temperature', NOW() - INTERVAL '3 minutes', 21),
 ('temperature', NOW() - INTERVAL '2 minutes', 19),
-('temperature', NOW() - INTERVAL '1 minutes', 300); -- anomaly value
+('temperature', NOW() - INTERVAL '1 minutes', 300); -- anomaly
