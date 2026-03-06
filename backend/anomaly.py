@@ -31,5 +31,5 @@ def get_algorithm(name: str):
         raise ValueError(
             f"Unknown algorithm: '{name}'. Available: {list(ALGORITHMS.keys())}"
         )
-        
+
     return ALGORITHMS[name]
