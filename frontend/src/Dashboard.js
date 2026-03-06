@@ -77,6 +77,7 @@ export default function GreenhouseDashboard() {
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState(null);
   const [appTitle, setAppTitle] = useState("Project Nexus — Environmental Dashboard");
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     Promise.all([fetch(`${API_BASE}/config`).then((r) => r.json()), fetchZones()])
@@ -102,21 +103,34 @@ export default function GreenhouseDashboard() {
 
   useEffect(() => {
     if (!selectedZone) return;
-    let active = true;
-    setLoadingData(true);
-    setError(null);
-    fetchReadings(selectedZone, fromTs, toTs)
-      .then((data) => {
-        if (!active) return;
+
+    let mounted = true;
+    let timer = null;
+
+    const load = async () => {
+      setLoadingData(true);
+      setError(null);
+      try {
+        const data = await fetchReadings(selectedZone, fromTs, toTs);
+        if (!mounted) return;
         setReadings(data);
+        setLastUpdated(Date.now());
         setLoadingData(false);
-      })
-      .catch(() => {
-        if (!active) return;
+      } catch (e) {
+        if (!mounted) return;
         setError("Failed to load readings. Please try again later.");
         setLoadingData(false);
-      });
-    return () => { active = false; };
+      }
+    };
+
+    // initial load + polling every 10s
+    load();
+    timer = setInterval(load, 10000);
+
+    return () => {
+      mounted = false;
+      if (timer) clearInterval(timer);
+    };
   }, [selectedZone, fromTs, toTs]);
 
   function applyQuickRange(idx) {
@@ -141,6 +155,9 @@ export default function GreenhouseDashboard() {
         <div>
           <div className="header-badge"><span className="pulse" />Live Monitor</div>
           <h1 style={{ marginTop: 8 }}>{appTitle}</h1>
+          {lastUpdated && (
+            <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>{`Last updated: ${new Date(lastUpdated).toLocaleString()}`}</div>
+          )}
         </div>
       </div>
 
