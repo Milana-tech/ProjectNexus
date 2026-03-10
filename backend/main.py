@@ -318,56 +318,92 @@ def get_readings(
 
 @app.post("/anomalies/run")
 def run_anomaly(
-    metric_id: str  = Query(..., description="Metric ID to run detection on"),
-    algorithm: str  = Query(..., description="Algorithm name, e.g. 'zscore'"),
-    start: datetime = Query(..., description="Start datetime, ISO 8601"),
-    end: datetime   = Query(..., description="End datetime, ISO 8601"),
+    metric_id: str = Query(..., description="Metric ID (numeric)"),
+    algorithm: str = Query(..., description="Algorithm name, e.g. 'zscore'"),
+    start: str     = Query(..., description="Start datetime, ISO 8601"),
+    end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
+    # Validate algorithm exists in registry
     try:
         fn = get_algorithm(algorithm)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    if start >= end:
+    # Validate start/end are valid datetimes so 400 not 422
+    try:
+        start_dt = datetime.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+    try:
+        end_dt = datetime.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+
+    if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+
+    # Validate metric_id is numeric
+    try:
+        mid = int(metric_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a numeric id.")
 
     try:
         with get_conn() as conn:
-            with conn.cursor(row_factory=None) as cur:
+            with conn.cursor() as cur:
+
+                # Check metric exists
+                cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail=f"metric_id '{mid}' not found.")
+
+                # Look up algorithm_id from algorithms table
+                cur.execute("SELECT id FROM algorithms WHERE name = %s", (algorithm,))
+                algo_row = cur.fetchone()
+                if algo_row is None:
+                    raise HTTPException(status_code=400, detail=f"Algorithm '{algorithm}' not registered in algorithms table.")
+                algorithm_id = algo_row["id"]
+
+                # Fetch readings
                 cur.execute("""
                     SELECT timestamp, value
-                    FROM metrics
+                    FROM readings
                     WHERE metric_id = %s
                     AND timestamp BETWEEN %s AND %s
                     ORDER BY timestamp
-                """, (metric_id, start, end))
+                """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No data found for metric_id '{metric_id}' in the given time range"
+            detail=f"No readings found for metric_id '{mid}' in the given time range."
         )
 
-    timestamps = [r[0] for r in rows]
-    values     = [r[1] for r in rows]
+    timestamps = [r["timestamp"] for r in rows]
+    values     = [r["value"] for r in rows]
     results    = fn(values)
 
+    # Store results
     try:
         with get_conn() as conn:
-            with conn.cursor(row_factory=None) as cur:
+            with conn.cursor() as cur:
+                # Clear old results for this metric to avoid duplicates
                 cur.execute(
-                    "DELETE FROM anomaly_results WHERE metric_id = %s",
-                    (metric_id,)
+                    "DELETE FROM anomaly_results WHERE metric_id = %s AND algorithm_id = %s",
+                    (mid, algorithm_id)
                 )
                 for i, r in enumerate(results):
                     cur.execute("""
                         INSERT INTO anomaly_results
-                        (metric_id, algorithm_id, timestamp, score, flag)
+                        (metric_id, algorithm_id, timestamp, anomaly_score, anomaly_flag)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (metric_id, algorithm, timestamps[i], r["score"], r["flag"]))
+                    """, (mid, algorithm_id, timestamps[i], r["score"], r["flag"]))
             conn.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
@@ -377,28 +413,48 @@ def run_anomaly(
 
 @app.get("/anomalies")
 def get_anomalies(
-    metric_id: str      = Query(..., description="Metric ID to retrieve results for"),
-    start: datetime     = Query(..., description="Start datetime, ISO 8601"),
-    end: datetime       = Query(..., description="End datetime, ISO 8601"),
+    metric_id: str = Query(..., description="Metric ID (numeric)"),
+    start: str     = Query(..., description="Start datetime, ISO 8601"),
+    end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
-    if start >= end:
+    # Validate start/end
+    try:
+        start_dt = datetime.fromisoformat(start)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+    try:
+        end_dt = datetime.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+
+    if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+
+    # Validate metric_id is numeric
+    try:
+        mid = int(metric_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a numeric id.")
 
     try:
         with get_conn() as conn:
-            with conn.cursor(row_factory=None) as cur:
+            with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT timestamp, score, flag
+                    SELECT timestamp, anomaly_score, anomaly_flag
                     FROM anomaly_results
                     WHERE metric_id = %s
                     AND timestamp BETWEEN %s AND %s
-                    ORDER BY timestamp
-                """, (metric_id, start, end))
+                    ORDER BY timestamp ASC
+                """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     return [
-        {"timestamp": str(r[0]), "score": r[1], "flag": r[2]}
+        {
+            "timestamp": str(r["timestamp"]),
+            "score": r["anomaly_score"],
+            "flag": r["anomaly_flag"],
+        }
         for r in rows
     ]

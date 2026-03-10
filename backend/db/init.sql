@@ -91,3 +91,7 @@ CREATE INDEX IF NOT EXISTS idx_readings_zone_id ON readings(zone_id);
 
 -- Convert readings to a TimescaleDB hypertable for time-series performance
 SELECT create_hypertable('readings', 'timestamp', if_not_exists => TRUE);
+
+INSERT INTO algorithms (name, type, version)
+VALUES ('zscore', 'anomaly_detection', '1.0')
+ON CONFLICT DO NOTHING;
