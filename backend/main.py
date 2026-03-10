@@ -350,3 +350,17 @@ def get_readings(
             for r in rows
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Entry point (for local dev without Docker)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+        with conn.cursor() as cur:
+            cur.execute("SELECT now();")
+            (now,) = cur.fetchone()
+
+    return {"ok": True, "now": str(now)}
