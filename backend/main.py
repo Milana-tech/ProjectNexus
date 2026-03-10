@@ -75,14 +75,17 @@ def get_zones():
         with get_conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT DISTINCT name
+                    SELECT DISTINCT id, name
                     FROM zones
                     ORDER BY name;
                 """)
                 rows = cur.fetchall()
         return [{"id": row["id"], "name": row["name"]} for row in rows]
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        log.exception("Failed to load zones")
+        raise HTTPException(status_code=500, detail="Failed to load zones") from e
 
 
 # ---------------------------------------------------------------------------
