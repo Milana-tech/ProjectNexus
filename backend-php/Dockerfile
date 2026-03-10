@@ -11,9 +11,13 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
+COPY composer.json ./
+
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+
 COPY . .
 
-RUN chmod +x bin/console
+RUN composer dump-autoload --optimize
 
 EXPOSE 8000
 
