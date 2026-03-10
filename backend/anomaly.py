@@ -26,6 +26,9 @@ ALGORITHMS = {
     "zscore": zscore_detection,
 }
 
+# 2020-01-01T00:00:00
+# 2099-01-01T00:00:00
+
 def get_algorithm(name: str):
     if name not in ALGORITHMS:
         raise ValueError(
