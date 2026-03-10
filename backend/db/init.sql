@@ -1,18 +1,29 @@
--- Create entities table (generic source, not domain-specific)
-CREATE TABLE IF NOT EXISTS entities (
+-- Create zones table (top-level physical/logical grouping)
+CREATE TABLE IF NOT EXISTS zones (
     id BIGSERIAL PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    type VARCHAR(255),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create metrics table (what is being measured, linked to an entity)
+-- Create devices table (physical device within a zone)
+CREATE TABLE IF NOT EXISTS devices (
+    id BIGSERIAL PRIMARY KEY,
+    zone_id BIGINT NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (zone_id, name)
+);
+
+-- Create metrics table (what is being measured, linked to a device)
 CREATE TABLE IF NOT EXISTS metrics (
     id BIGSERIAL PRIMARY KEY,
-    entity_id BIGINT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    device_id BIGINT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     unit VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (device_id, name)
 );
 
 -- Create readings table (raw time-series data only)
@@ -21,6 +32,7 @@ CREATE TABLE IF NOT EXISTS readings (
     timestamp TIMESTAMPTZ NOT NULL,
     value DOUBLE PRECISION NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    zone_id BIGINT NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
     metric_id BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,
     PRIMARY KEY (id, timestamp)
 );
@@ -72,8 +84,10 @@ CREATE INDEX IF NOT EXISTS idx_forecast_results_metric_id ON forecast_results(me
 CREATE INDEX IF NOT EXISTS idx_forecast_results_algorithm_id ON forecast_results(algorithm_id);
 CREATE INDEX IF NOT EXISTS idx_forecast_results_forecast_timestamp ON forecast_results(forecast_timestamp DESC);
 
--- Indexes for metrics
-CREATE INDEX IF NOT EXISTS idx_metrics_entity_id ON metrics(entity_id);
+-- Indexes for metrics and devices
+CREATE INDEX IF NOT EXISTS idx_metrics_device_id ON metrics(device_id);
+CREATE INDEX IF NOT EXISTS idx_devices_zone_id ON devices(zone_id);
+CREATE INDEX IF NOT EXISTS idx_readings_zone_id ON readings(zone_id);
 
 -- Convert readings to a TimescaleDB hypertable for time-series performance
 SELECT create_hypertable('readings', 'timestamp', if_not_exists => TRUE);

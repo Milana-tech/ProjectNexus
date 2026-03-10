@@ -40,6 +40,8 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      APP_ENV: ${APP_ENV:-dev}
+      APP_DEBUG: ${APP_DEBUG:-1}
     depends_on:
       - db
     ports:
@@ -48,16 +50,19 @@ services:
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
     container_name: project-nexus-frontend
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      VITE_API_URL: ${VITE_API_URL}
+      - VITE_API_URL=${VITE_API_URL}
+      - HOST=0.0.0.0
+      - PORT=3000
     depends_on:
       - backend
     ports:
-      - "5173:5173"
+      - "3000:3000"
 
   simulator:
     build:
@@ -68,8 +73,9 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      SIM_ENTITY_NAME: ${SIM_ENTITY_NAME:-Greenhouse A}
-      SIM_ENTITY_TYPE: ${SIM_ENTITY_TYPE:-greenhouse}
+      SIM_ZONE_NAME: ${SIM_ZONE_NAME:-Zone 1}
+      SIM_DEVICE_NAME: ${SIM_DEVICE_NAME:-Greenhouse A}
+      SIM_DEVICE_TYPE: ${SIM_DEVICE_TYPE:-greenhouse}
       SIM_METRICS: ${SIM_METRICS:-temperature,humidity}
       SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
       SIM_SPIKE_EVERY: ${SIM_SPIKE_EVERY:-20}
