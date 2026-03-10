@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 # Load environment variables (important if running locally)
 load_dotenv()
 
+
 def get_connection():
     database_url = os.getenv("DATABASE_URL")
 

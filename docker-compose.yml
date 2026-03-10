@@ -15,7 +15,7 @@ services:
       - "5432:5432"
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
-      - ./sql:/docker-entrypoint-initdb.d
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
 
   backend:
     build:
@@ -34,16 +34,49 @@ services:
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
     container_name: project-nexus-frontend
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      VITE_API_URL: ${VITE_API_URL}
+      - VITE_API_URL=${VITE_API_URL}
+      - HOST=0.0.0.0
+      - PORT=3000
     depends_on:
       - backend
     ports:
-      - "5173:5173"
+      - "3000:3000"
+
+  php-backend:
+    image: php:8.2-fpm-alpine
+    container_name: nexus-php-backend
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      - db
+    command: ["php", "-S", "0.0.0.0:8001", "-t", "/var/www/html"]
+    restart: unless-stopped
+
+  simulator:
+    build:
+      context: ./simulator
+    container_name: project-nexus-simulator
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SIM_ZONE_NAME: ${SIM_ZONE_NAME:-Zone 1}
+      SIM_DEVICE_NAME: ${SIM_DEVICE_NAME:-Greenhouse A}
+      SIM_DEVICE_TYPE: ${SIM_DEVICE_TYPE:-greenhouse}
+      SIM_METRICS: ${SIM_METRICS:-temperature,humidity}
+      SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
+      SIM_SPIKE_EVERY: ${SIM_SPIKE_EVERY:-20}
+    depends_on:
+      - db
 
 volumes:
   timescaledb_data:
