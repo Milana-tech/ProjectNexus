@@ -70,7 +70,7 @@ def _default_unit(metric: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# DB bootstrap — wait for Postgres, create entity + metrics if needed
+# DB bootstrap — wait for Postgres, create zone + device + metrics if needed
 # (Direct DB access only during startup; all readings go through the API)
 # ---------------------------------------------------------------------------
 

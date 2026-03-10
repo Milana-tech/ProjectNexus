@@ -332,7 +332,7 @@ def run_anomaly(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Validate start/end are valid datetimes so 400 not 422
+    # Validate start/end as strings → return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -354,20 +354,19 @@ def run_anomaly(
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-
                 # Check metric exists
                 cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
                 if cur.fetchone() is None:
                     raise HTTPException(status_code=404, detail=f"metric_id '{mid}' not found.")
 
-                # Look up algorithm_id from algorithms table
+                # Look up algorithm_id FK from algorithms table
                 cur.execute("SELECT id FROM algorithms WHERE name = %s", (algorithm,))
                 algo_row = cur.fetchone()
                 if algo_row is None:
                     raise HTTPException(status_code=400, detail=f"Algorithm '{algorithm}' not registered in algorithms table.")
                 algorithm_id = algo_row["id"]
 
-                # Fetch readings
+                # Fetch readings from correct table
                 cur.execute("""
                     SELECT timestamp, value
                     FROM readings
@@ -392,11 +391,10 @@ def run_anomaly(
     values     = [r["value"] for r in rows]
     results    = fn(values)
 
-    # Store results
+    # Store results and clear old ones first to avoid duplicates
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # Clear old results for this metric to avoid duplicates
                 cur.execute(
                     "DELETE FROM anomaly_results WHERE metric_id = %s AND algorithm_id = %s",
                     (mid, algorithm_id)
@@ -420,7 +418,7 @@ def get_anomalies(
     start: str     = Query(..., description="Start datetime, ISO 8601"),
     end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
-    # Validate start/end
+    # Validate start/end as strings so return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -461,3 +459,12 @@ def get_anomalies(
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Entry point (for local dev without Docker)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
