@@ -25,7 +25,14 @@ async function fetchReadings(zoneId, from, to) {
   const res = await fetch(`${API_BASE}/readings/${zoneId}?${qs.toString()}`);
   if (!res.ok) throw new Error(`Failed to fetch readings: ${res.statusText}`);
   const data = await res.json();
-  return data.map((r) => ({ timestamp: new Date(r.timestamp).getTime(), temperature: r.temperature, humidity: r.humidity }));
+  // API returns flat rows {timestamp, metric, value} — pivot by timestamp
+  const byTs = {};
+  for (const r of data) {
+    const ts = new Date(r.timestamp).getTime();
+    if (!byTs[ts]) byTs[ts] = { timestamp: ts };
+    byTs[ts][r.metric] = r.value;
+  }
+  return Object.values(byTs).sort((a, b) => a.timestamp - b.timestamp);
 }
 
 function toLocalDatetime(ts) {
