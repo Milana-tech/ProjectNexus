@@ -91,3 +91,29 @@ CREATE INDEX IF NOT EXISTS idx_readings_zone_id ON readings(zone_id);
 
 -- Convert readings to a TimescaleDB hypertable for time-series performance
 SELECT create_hypertable('readings', 'timestamp', if_not_exists => TRUE);
+
+INSERT INTO algorithms (name, type, version)
+VALUES ('zscore', 'anomaly_detection', '1.0')
+ON CONFLICT DO NOTHING;
+
+-- Seed zones
+INSERT INTO zones (name, description) VALUES
+('Zone A', 'Environmental zone A'),
+('Zone B', 'Environmental zone B')
+ON CONFLICT (name) DO NOTHING;
+
+-- Seed devices
+INSERT INTO devices (zone_id, name, type)
+VALUES
+((SELECT id FROM zones WHERE name = 'Zone A'), 'Device 1', 'sensor'),
+((SELECT id FROM zones WHERE name = 'Zone B'), 'Device 2', 'sensor')
+ON CONFLICT (zone_id, name) DO NOTHING;
+
+-- Seed metrics
+INSERT INTO metrics (device_id, name, unit)
+VALUES
+((SELECT id FROM devices WHERE name = 'Device 1'), 'temperature', 'celsius'),
+((SELECT id FROM devices WHERE name = 'Device 1'), 'humidity', 'percent'),
+((SELECT id FROM devices WHERE name = 'Device 2'), 'temperature', 'celsius'),
+((SELECT id FROM devices WHERE name = 'Device 2'), 'humidity', 'percent')
+ON CONFLICT (device_id, name) DO NOTHING;
