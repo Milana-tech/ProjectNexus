@@ -89,6 +89,24 @@ def get_zones():
 
 
 # ---------------------------------------------------------------------------
+# Entities  (domain-agnostic alias for /zones — used by the frontend dropdown)
+# ---------------------------------------------------------------------------
+
+@app.get("/entities", summary="List all entities")
+def get_entities():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name FROM zones ORDER BY name;")
+                rows = cur.fetchall()
+        return [{"id": row["id"], "name": row["name"]} for row in rows]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load entities")
+        raise HTTPException(status_code=500, detail="Failed to load entities") from e
+
+# ---------------------------------------------------------------------------
 # UI config
 # ---------------------------------------------------------------------------
 
@@ -214,7 +232,7 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
                         VALUES (%s, %s, %s, %s, %s)
                         """,
                         (reading.metric_id, metric_zone_map[reading.metric_id],
-                         reading.timestamp, reading.value, now),
+                        reading.timestamp, reading.value, now),
                     )
                     inserted += 1
                 except Exception as exc:
@@ -268,7 +286,7 @@ def get_readings_by_zone(
                 FROM readings r
                 JOIN metrics m ON m.id = r.metric_id
                 WHERE r.zone_id = %s
-                  AND r.timestamp BETWEEN %s AND %s
+                AND r.timestamp BETWEEN %s AND %s
                 ORDER BY r.timestamp ASC
                 """,
                 (zid, start, end),
