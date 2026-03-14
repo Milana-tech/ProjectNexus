@@ -32,15 +32,15 @@ function getMetricColor(metricName, allMetricNames) {
 }
 
 async function fetchEntities() {
-  const res = await fetch(`${API_BASE}/zones`);
-  if (!res.ok) throw new Error(`Failed to fetch entities: ${res.statusText}`);
+  const res = await fetch(`${API_BASE}/entities`);
+  if (!res.ok) throw new Error(`Failed to fetch entities (${res.status}: ${res.statusText})`);
   const data = await res.json();
   return data.map((e) => ({ id: String(e.id), label: e.name }));
 }
 
 async function fetchMetrics(entityId) {
   const res = await fetch(`${API_BASE}/metrics?entity_id=${entityId}`);
-  if (!res.ok) throw new Error(`Failed to fetch metrics: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to fetch metrics (${res.status}: ${res.statusText})`);
   const data = await res.json();
   return data.map((m) => ({ id: String(m.id), name: m.name, unit: m.unit ?? "" }));
 }
@@ -166,9 +166,8 @@ function CustomTooltip({ active, payload, label, unit }) {
 }
 
 function MetricLineChart({ data, loading, metricName, unit, fromTs, toTs, color }) {
-  const range = toTs - fromTs;
-  const ticks = generateTicks(fromTs, toTs, 6);
-
+  const range        = toTs - fromTs;
+  const ticks        = generateTicks(fromTs, toTs, 6);
   const yLabel       = unit ? `${metricName} (${unit})` : metricName || "Value";
   const tickFormatter = unit ? (v) => `${v}${unit}` : (v) => String(v);
 
@@ -251,6 +250,14 @@ function StatCard({ label, value, unit, color }) {
   );
 }
 
+function DropdownError({ message }) {
+  return (
+    <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 4 }}>
+      ⚠️ {message}
+    </div>
+  );
+}
+
 // ─── main dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -260,19 +267,19 @@ export default function Dashboard() {
 
   const [fromTs,          setFromTs]          = useState(() => Date.now() - 6 * 60 * 60 * 1000);
   const [toTs,            setToTs]            = useState(() => Date.now());
-
   const [rangeError,      setRangeError]      = useState(null);
 
   const [entities,        setEntities]        = useState([]);
-  const [selectedEntity,  setSelectedEntity]  = useState("");
+  const [selectedEntity,  setSelectedEntity]  = useState(null);
   const [loadingEntities, setLoadingEntities] = useState(true);
+  const [entityError,     setEntityError]     = useState(null); 
 
   const [metrics,         setMetrics]         = useState([]);
   const [selectedMetric,  setSelectedMetric]  = useState(null);
   const [loadingMetrics,  setLoadingMetrics]  = useState(false);
+  const [metricError,     setMetricError]     = useState(null); 
 
   const [lastUpdated,     setLastUpdated]     = useState(null);
-  const [configError,     setConfigError]     = useState(null);
 
   const metricNames = metrics.map((m) => m.name);
   const chartColor  = selectedMetric
@@ -280,6 +287,9 @@ export default function Dashboard() {
     : COLOR_PALETTE[0];
 
   useEffect(() => {
+    setLoadingEntities(true);
+    setEntityError(null);
+
     Promise.all([fetchConfig(), fetchEntities()])
       .then(([config, ents]) => {
         if (config?.quick_ranges) {
@@ -297,17 +307,18 @@ export default function Dashboard() {
         setLoadingEntities(false);
       })
       .catch((err) => {
-        setConfigError(err.message);
+        setEntityError(err.message ?? "Could not load entities.");
         setLoadingEntities(false);
       });
   }, []);
 
-  //load metrics when entity changes; time range is preserved
   useEffect(() => {
     if (!selectedEntity) return;
+
     setLoadingMetrics(true);
-    setSelectedMetric(null);
+    setMetricError(null);
     setMetrics([]);
+    setSelectedMetric(null);
 
     fetchMetrics(selectedEntity)
       .then((ms) => {
@@ -315,21 +326,25 @@ export default function Dashboard() {
         if (ms.length) setSelectedMetric(ms[0]);
         setLoadingMetrics(false);
       })
-      .catch(() => setLoadingMetrics(false));
+      .catch((err) => {
+        setMetricError(err.message ?? "Could not load metrics.");
+        setLoadingMetrics(false);
+      });
   }, [selectedEntity]);
-  // Note: fromTs/toTs are NOT in this dependency — switching entity keeps range.
 
+  // ── readings ─────────────────────────────────────────────────────────────
   const { data, loading: loadingData, error: dataError } = useReadings({
     metricId: selectedMetric?.id ?? null,
     start:    fromTs,
     end:      toTs,
-    skip:     !!rangeError, 
+    skip:     !!rangeError,
   });
 
   useEffect(() => {
     if (data.length > 0) setLastUpdated(Date.now());
   }, [data]);
 
+  // ── quick range ───────────────────────────────────────────────────────────
   function applyQuickRange(idx) {
     const now = Date.now();
     setActiveRange(idx);
@@ -340,48 +355,30 @@ export default function Dashboard() {
 
   function handleFromChange(e) {
     const ts = new Date(e.target.value).getTime();
-    if (isNaN(ts)) {
-      setRangeError("Invalid start date/time format.");
-      return;
-    }
+    if (isNaN(ts)) { setRangeError("Invalid start date/time format."); return; }
     setActiveRange(-1);
     setFromTs(ts);
-    if (ts >= toTs) {
-      setRangeError("Start must be before end.");
-    } else {
-      setRangeError(null);
-    }
+    setRangeError(ts >= toTs ? "Start must be before end." : null);
   }
 
   function handleToChange(e) {
     const ts = new Date(e.target.value).getTime();
-    if (isNaN(ts)) {
-      setRangeError("Invalid end date/time format.");
-      return;
-    }
+    if (isNaN(ts)) { setRangeError("Invalid end date/time format."); return; }
     setActiveRange(-1);
     setToTs(ts);
-    if (ts <= fromTs) {
-      setRangeError("End must be after start.");
-    } else {
-      setRangeError(null);
-    }
+    setRangeError(ts <= fromTs ? "End must be after start." : null);
   }
 
   const latestValue = data.at(-1)?.value;
   const avgValue    = data.length
-    ? (data.reduce((s, r) => s + r.value, 0) / data.length).toFixed(2)
-    : null;
+    ? (data.reduce((s, r) => s + r.value, 0) / data.length).toFixed(2) : null;
   const minValue    = data.length
-    ? Math.min(...data.map((r) => r.value)).toFixed(2)
-    : null;
+    ? Math.min(...data.map((r) => r.value)).toFixed(2) : null;
   const maxValue    = data.length
-    ? Math.max(...data.map((r) => r.value)).toFixed(2)
-    : null;
+    ? Math.max(...data.map((r) => r.value)).toFixed(2) : null;
 
   const unit       = selectedMetric?.unit ?? "";
   const metricName = selectedMetric?.name ?? "";
-  const error      = configError || dataError;
 
   return (
     <div className="dash">
@@ -401,40 +398,51 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* General error banner */}
-      {error && (
+      {dataError && (
         <div style={{
           background: "#fee2e2", color: "#b91c1c",
           padding: "12px 20px", borderRadius: 8,
           marginBottom: 20, border: "1px solid #f87171",
         }}>
-          <strong>Error:</strong> {error}
+          <strong>Error:</strong> {dataError}
         </div>
       )}
 
-      {/* Controls */}
       <div className="controls">
         <div className="control-group">
           <label htmlFor="entity-select">Entity</label>
           {loadingEntities ? (
-            <select id="entity-select" disabled><option>Loading…</option></select>
+            <select id="entity-select" disabled>
+              <option>Loading entities…</option>
+            </select>
           ) : (
             <select
               id="entity-select"
-              value={selectedEntity}
+              value={selectedEntity ?? ""}
               onChange={(e) => setSelectedEntity(e.target.value)}
             >
+              {entities.length === 0 && !entityError && (
+                <option value="">No entities available</option>
+              )}
               {entities.map((e) => (
                 <option key={e.id} value={e.id}>{e.label}</option>
               ))}
             </select>
           )}
+
+          {entityError && <DropdownError message={entityError} />}
         </div>
 
         <div className="control-group">
           <label htmlFor="metric-select">Metric</label>
-          {loadingMetrics ? (
-            <select id="metric-select" disabled><option>Loading…</option></select>
+          {!selectedEntity ? (
+            <select id="metric-select" disabled>
+              <option>Select an entity first</option>
+            </select>
+          ) : loadingMetrics ? (
+            <select id="metric-select" disabled>
+              <option>Loading metrics…</option>
+            </select>
           ) : (
             <select
               id="metric-select"
@@ -444,7 +452,9 @@ export default function Dashboard() {
                 setSelectedMetric(m ?? null);
               }}
             >
-              {metrics.length === 0 && <option value="">No metrics available</option>}
+              {metrics.length === 0 && !metricError && (
+                <option value="">No metrics available</option>
+              )}
               {metrics.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}{m.unit ? ` (${m.unit})` : ""}
@@ -452,6 +462,8 @@ export default function Dashboard() {
               ))}
             </select>
           )}
+
+          {metricError && <DropdownError message={metricError} />}
         </div>
 
         <div className="divider" />
@@ -498,23 +510,17 @@ export default function Dashboard() {
 
       {rangeError && (
         <div style={{
-          background: "#fff7ed",
-          color: "#c2410c",
-          padding: "10px 18px",
-          borderRadius: 8,
-          marginBottom: 16,
-          border: "1px solid #fdba74",
-          fontSize: 13,
-          fontFamily: "system-ui, sans-serif",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
+          background: "#fff7ed", color: "#c2410c",
+          padding: "10px 18px", borderRadius: 8, marginBottom: 16,
+          border: "1px solid #fdba74", fontSize: 13,
+          display: "flex", alignItems: "center", gap: 8,
         }}>
           ⚠️ <strong>Invalid time range:</strong>&nbsp;{rangeError}&nbsp;
           Chart will not update until corrected.
         </div>
       )}
 
+      {/* Stats */}
       <div className="stats-row">
         <StatCard label="Current" value={latestValue ?? "–"} unit={unit} color={chartColor} />
         <StatCard label="Average" value={avgValue}           unit={unit} color={chartColor} />
@@ -522,6 +528,7 @@ export default function Dashboard() {
         <StatCard label="Max"     value={maxValue}           unit={unit} color={chartColor} />
       </div>
 
+      {/* Chart */}
       <MetricLineChart
         data={data}
         loading={loadingData}
