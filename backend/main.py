@@ -332,20 +332,19 @@ def run_anomaly(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Validate start/end as strings → return 400 not 422
+    # Validate start/end as strings return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=422, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
     try:
         end_dt = datetime.fromisoformat(end)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
-
-    if start_dt >= end_dt:
-        raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+        raise HTTPException(status_code=422, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
     # Validate metric_id is numeric
+    if not metric_id or not metric_id.strip():
+        raise HTTPException(status_code=422, detail="metric_id is required.")
     try:
         mid = int(metric_id)
     except ValueError:
