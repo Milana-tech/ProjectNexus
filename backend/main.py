@@ -264,8 +264,8 @@ def get_readings_by_zone(
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
 
-    if start > end:
-        raise HTTPException(status_code=400, detail="start must be before end")
+    if start_dt and end_dt and start_dt >= end_dt:
+        raise HTTPException(status_code=400, detail="'start' must be before 'end'. Equal values are not allowed.")
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -299,8 +299,8 @@ def get_readings_by_zone(
 @app.get("/readings")
 def get_readings(
     metric_id: str = Query(..., description="Metric ID (numeric)"),
-    start: str     = Query(None, description="Start datetime, ISO 8601"),
-    end: str       = Query(None, description="End datetime, ISO 8601"),
+    start: str     = Query(..., description="Start datetime, ISO 8601"),
+    end: str       = Query(..., description="End datetime, ISO 8601"),
     limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
 
