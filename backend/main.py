@@ -264,7 +264,7 @@ def get_readings_by_zone(
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
 
-    if start_dt and end_dt and start_dt >= end_dt:
+    if start > end:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'. Equal values are not allowed.")
 
     with get_conn() as conn:
