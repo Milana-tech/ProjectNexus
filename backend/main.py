@@ -87,6 +87,37 @@ def get_zones():
         log.exception("Failed to load zones")
         raise HTTPException(status_code=500, detail="Failed to load zones") from e
 
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+@app.get("/metrics")
+def get_metrics():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT m.id, m.name, m.unit, z.name AS zone_name
+                    FROM metrics m
+                    JOIN devices d ON d.id = m.device_id
+                    JOIN zones z ON z.id = d.zone_id
+                    ORDER BY z.name, m.name;
+                """)
+                rows = cur.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "unit": row["unit"],
+                "zone": row["zone_name"],
+            }
+            for row in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load metrics")
+        raise HTTPException(status_code=500, detail="Failed to load metrics") from e
 
 # ---------------------------------------------------------------------------
 # UI config
