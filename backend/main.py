@@ -406,6 +406,8 @@ def run_anomaly(
                         VALUES (%s, %s, %s, %s, %s)
                     """, (mid, algorithm_id, timestamps[i], r["score"], r["flag"]))
             conn.commit()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
 
