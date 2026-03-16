@@ -89,8 +89,7 @@ export default function MergedReadingsTable() {
         setMetricName("");
         setLoading(true);
 
-        try 
-        {
+        try {
             // Fetch both in parallel
             const [readingsRes, anomaliesRes] = await Promise.all([
                 fetch(`${API_URL}/readings?${new URLSearchParams({ metric_id: metricId, start, end })}`),
@@ -100,7 +99,13 @@ export default function MergedReadingsTable() {
             // Readings failure is fatal show error and stop
             if (!readingsRes.ok) {
                 const b = await readingsRes.json().catch(() => ({}));
-                throw new Error(b.detail || `Could not load readings (${readingsRes.status}). Please try again.`);
+                if (readingsRes.status === 404) {
+                    throw new Error(`No data found for metric ID ${metricId}. Please check the ID and try again.`);
+                }
+                if (readingsRes.status === 400) {
+                    throw new Error(`Invalid request: ${b.detail || "please check your inputs."}`);
+                }
+                throw new Error("Something went wrong loading readings. Please try again.");
             }
 
             const readingsData = await readingsRes.json();
@@ -125,8 +130,10 @@ export default function MergedReadingsTable() {
             setFetched(true);
 
         } catch (e) {
-            // Only readings errors reach here
-            setError(e.message || "Something went wrong. Please try again.");
+            const msg = typeof e.message === "string" && e.message.length < 200
+                ? e.message
+                : "Something went wrong. Please try again.";
+            setError(msg);
             setRows([]);
             setFetched(false);
         } finally {
