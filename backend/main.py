@@ -439,11 +439,15 @@ def run_anomaly(
 
 
 @app.get("/anomalies")
-def get_anomalies(
-    metric_id: str = Query(..., description="Metric ID (numeric)"),
-    start: str     = Query(..., description="Start datetime, ISO 8601"),
-    end: str       = Query(..., description="End datetime, ISO 8601"),
-):
+return [
+    {
+        "timestamp": r["timestamp"].isoformat(),
+        "score": r["anomaly_score"],
+        "flag": r["anomaly_flag"],
+    }
+
+    for r in rows
+]
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
