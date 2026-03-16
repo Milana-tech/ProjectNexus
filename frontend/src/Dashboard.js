@@ -16,14 +16,14 @@ const API_BASE =
   "http://localhost:8000";
 
 const COLOR_PALETTE = [
-  "#2563eb", // blue
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#ef4444", // red
-  "#8b5cf6", // violet
-  "#06b6d4", // cyan
-  "#f97316", // orange
-  "#84cc16", // lime
+  "#2563eb",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#f97316",
+  "#84cc16",
 ];
 
 function getMetricColor(metricName, allMetricNames) {
@@ -51,21 +51,20 @@ async function fetchConfig() {
   return res.json();
 }
 
-// useReadings — data-fetch hook using universal GET /readings endpoint
+// ─── useReadings hook ─────────────────────────────────────────────────────────
 
-function useReadings({ metricId, start, end }) {
+function useReadings({ metricId, start, end, skip }) {
   const [data, setData]       = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const abortRef              = useRef(null);
 
   const load = useCallback(async () => {
-    if (!metricId || !start || !end) {
+    if (!metricId || !start || !end || skip) {
       setData([]);
       return;
     }
 
-    // Cancel previous in-flight request
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
 
@@ -87,8 +86,6 @@ function useReadings({ metricId, start, end }) {
       if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
 
       const json = await res.json();
-
-      // Map to chart-consumable shape: { time (ms), value }
       const readings = Array.isArray(json.readings) ? json.readings : [];
       setData(
         readings.map((r) => ({
@@ -103,7 +100,7 @@ function useReadings({ metricId, start, end }) {
     } finally {
       setLoading(false);
     }
-  }, [metricId, start, end]);
+  }, [metricId, start, end, skip]);
 
   useEffect(() => {
     load();
@@ -117,7 +114,7 @@ function useReadings({ metricId, start, end }) {
   return { data, loading, error };
 }
 
-// Utility helpers
+// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function toLocalDatetime(ts) {
   if (!ts || isNaN(ts)) return "";
@@ -139,7 +136,7 @@ function formatTick(t, range) {
   return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
 }
 
-// MetricLineChart — generic, accepts metric_name + unit as props
+// ─── sub-components ───────────────────────────────────────────────────────────
 
 function CustomTooltip({ active, payload, label, unit }) {
   if (!active || !payload?.length) return null;
@@ -172,13 +169,8 @@ function MetricLineChart({ data, loading, metricName, unit, fromTs, toTs, color 
   const range = toTs - fromTs;
   const ticks = generateTicks(fromTs, toTs, 6);
 
-  const yLabel = unit
-    ? `${metricName} (${unit})`
-    : metricName || "Value";
-
-  const tickFormatter = unit
-    ? (v) => `${v}${unit}`
-    : (v) => String(v);
+  const yLabel       = unit ? `${metricName} (${unit})` : metricName || "Value";
+  const tickFormatter = unit ? (v) => `${v}${unit}` : (v) => String(v);
 
   return (
     <div className="chart-card">
@@ -259,33 +251,34 @@ function StatCard({ label, value, unit, color }) {
   );
 }
 
-// Main dashboard
+// ─── main dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const [appTitle,      setAppTitle]      = useState("Project Nexus — Dashboard");
-  const [quickRanges,   setQuickRanges]   = useState([]);
-  const [activeRange,   setActiveRange]   = useState(1);
-  const [fromTs,        setFromTs]        = useState(() => Date.now() - 6 * 60 * 60 * 1000);
-  const [toTs,          setToTs]          = useState(() => Date.now());
+  const [appTitle,        setAppTitle]        = useState("Project Nexus — Dashboard");
+  const [quickRanges,     setQuickRanges]     = useState([]);
+  const [activeRange,     setActiveRange]     = useState(1);
 
-  const [entities,      setEntities]      = useState([]);
-  const [selectedEntity, setSelectedEntity] = useState("");
+  const [fromTs,          setFromTs]          = useState(() => Date.now() - 6 * 60 * 60 * 1000);
+  const [toTs,            setToTs]            = useState(() => Date.now());
+
+  const [rangeError,      setRangeError]      = useState(null);
+
+  const [entities,        setEntities]        = useState([]);
+  const [selectedEntity,  setSelectedEntity]  = useState("");
   const [loadingEntities, setLoadingEntities] = useState(true);
 
-  const [metrics,       setMetrics]       = useState([]);   // [{id, name, unit}]
-  const [selectedMetric, setSelectedMetric] = useState(null); // {id, name, unit}
-  const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [metrics,         setMetrics]         = useState([]);
+  const [selectedMetric,  setSelectedMetric]  = useState(null);
+  const [loadingMetrics,  setLoadingMetrics]  = useState(false);
 
-  const [lastUpdated,   setLastUpdated]   = useState(null);
-  const [configError,   setConfigError]   = useState(null);
+  const [lastUpdated,     setLastUpdated]     = useState(null);
+  const [configError,     setConfigError]     = useState(null);
 
-  // Derive color from metric name within current metrics list
   const metricNames = metrics.map((m) => m.name);
   const chartColor  = selectedMetric
     ? getMetricColor(selectedMetric.name, metricNames)
     : COLOR_PALETTE[0];
 
-  // Load config + entities on mount
   useEffect(() => {
     Promise.all([fetchConfig(), fetchEntities()])
       .then(([config, ents]) => {
@@ -309,7 +302,7 @@ export default function Dashboard() {
       });
   }, []);
 
-  // Load metrics when entity changes
+  //load metrics when entity changes; time range is preserved
   useEffect(() => {
     if (!selectedEntity) return;
     setLoadingMetrics(true);
@@ -322,50 +315,77 @@ export default function Dashboard() {
         if (ms.length) setSelectedMetric(ms[0]);
         setLoadingMetrics(false);
       })
-      .catch(() => {
-        setLoadingMetrics(false);
-      });
+      .catch(() => setLoadingMetrics(false));
   }, [selectedEntity]);
+  // Note: fromTs/toTs are NOT in this dependency — switching entity keeps range.
 
-  // Fetch readings via hook
   const { data, loading: loadingData, error: dataError } = useReadings({
     metricId: selectedMetric?.id ?? null,
     start:    fromTs,
     end:      toTs,
+    skip:     !!rangeError, 
   });
 
-  // Update last-updated timestamp whenever new data arrives
   useEffect(() => {
     if (data.length > 0) setLastUpdated(Date.now());
   }, [data]);
 
-  // Quick range handler
   function applyQuickRange(idx) {
     const now = Date.now();
     setActiveRange(idx);
     setToTs(now);
     setFromTs(now - (quickRanges[idx]?.ms ?? 6 * 60 * 60 * 1000));
+    setRangeError(null);
   }
 
-  // Stats
+  function handleFromChange(e) {
+    const ts = new Date(e.target.value).getTime();
+    if (isNaN(ts)) {
+      setRangeError("Invalid start date/time format.");
+      return;
+    }
+    setActiveRange(-1);
+    setFromTs(ts);
+    if (ts >= toTs) {
+      setRangeError("Start must be before end.");
+    } else {
+      setRangeError(null);
+    }
+  }
+
+  function handleToChange(e) {
+    const ts = new Date(e.target.value).getTime();
+    if (isNaN(ts)) {
+      setRangeError("Invalid end date/time format.");
+      return;
+    }
+    setActiveRange(-1);
+    setToTs(ts);
+    if (ts <= fromTs) {
+      setRangeError("End must be after start.");
+    } else {
+      setRangeError(null);
+    }
+  }
+
   const latestValue = data.at(-1)?.value;
-  const avgValue = data.length
+  const avgValue    = data.length
     ? (data.reduce((s, r) => s + r.value, 0) / data.length).toFixed(2)
     : null;
-  const minValue = data.length
+  const minValue    = data.length
     ? Math.min(...data.map((r) => r.value)).toFixed(2)
     : null;
-  const maxValue = data.length
+  const maxValue    = data.length
     ? Math.max(...data.map((r) => r.value)).toFixed(2)
     : null;
 
   const unit       = selectedMetric?.unit ?? "";
   const metricName = selectedMetric?.name ?? "";
-
-  const error = configError || dataError;
+  const error      = configError || dataError;
 
   return (
     <div className="dash">
+
       {/* Header */}
       <div className="header">
         <div>
@@ -381,7 +401,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Error banner */}
+      {/* General error banner */}
       {error && (
         <div style={{
           background: "#fee2e2", color: "#b91c1c",
@@ -394,8 +414,6 @@ export default function Dashboard() {
 
       {/* Controls */}
       <div className="controls">
-
-        {/* Entity selector */}
         <div className="control-group">
           <label htmlFor="entity-select">Entity</label>
           {loadingEntities ? (
@@ -413,7 +431,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Metric selector */}
         <div className="control-group">
           <label htmlFor="metric-select">Metric</label>
           {loadingMetrics ? (
@@ -427,9 +444,7 @@ export default function Dashboard() {
                 setSelectedMetric(m ?? null);
               }}
             >
-              {metrics.length === 0 && (
-                <option value="">No metrics available</option>
-              )}
+              {metrics.length === 0 && <option value="">No metrics available</option>}
               {metrics.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.name}{m.unit ? ` (${m.unit})` : ""}
@@ -441,7 +456,6 @@ export default function Dashboard() {
 
         <div className="divider" />
 
-        {/* Quick range buttons */}
         <div className="control-group">
           <label>Quick range</label>
           <div className="range-buttons">
@@ -459,21 +473,14 @@ export default function Dashboard() {
 
         <div className="divider" />
 
-        {/* Custom date range */}
         <div className="control-group">
           <label htmlFor="from-date">From</label>
           <input
             id="from-date"
             type="datetime-local"
             value={toLocalDatetime(fromTs)}
-            onChange={(e) => {
-              const ts = new Date(e.target.value).getTime();
-              if (!isNaN(ts)) {
-                setActiveRange(-1);
-                setFromTs(ts);
-                if (ts > toTs) setToTs(ts + 3_600_000);
-              }
-            }}
+            onChange={handleFromChange}
+            style={rangeError ? { borderColor: "#ef4444", outline: "none" } : {}}
           />
         </div>
 
@@ -483,27 +490,38 @@ export default function Dashboard() {
             id="to-date"
             type="datetime-local"
             value={toLocalDatetime(toTs)}
-            onChange={(e) => {
-              const ts = new Date(e.target.value).getTime();
-              if (!isNaN(ts)) {
-                setActiveRange(-1);
-                setToTs(ts);
-                if (ts < fromTs) setFromTs(ts - 3_600_000);
-              }
-            }}
+            onChange={handleToChange}
+            style={rangeError ? { borderColor: "#ef4444", outline: "none" } : {}}
           />
         </div>
       </div>
 
-      {/* Stats row */}
+      {rangeError && (
+        <div style={{
+          background: "#fff7ed",
+          color: "#c2410c",
+          padding: "10px 18px",
+          borderRadius: 8,
+          marginBottom: 16,
+          border: "1px solid #fdba74",
+          fontSize: 13,
+          fontFamily: "system-ui, sans-serif",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          ⚠️ <strong>Invalid time range:</strong>&nbsp;{rangeError}&nbsp;
+          Chart will not update until corrected.
+        </div>
+      )}
+
       <div className="stats-row">
-        <StatCard label="Current"  value={latestValue ?? "–"} unit={unit} color={chartColor} />
-        <StatCard label="Average"  value={avgValue}           unit={unit} color={chartColor} />
-        <StatCard label="Min"      value={minValue}           unit={unit} color={chartColor} />
-        <StatCard label="Max"      value={maxValue}           unit={unit} color={chartColor} />
+        <StatCard label="Current" value={latestValue ?? "–"} unit={unit} color={chartColor} />
+        <StatCard label="Average" value={avgValue}           unit={unit} color={chartColor} />
+        <StatCard label="Min"     value={minValue}           unit={unit} color={chartColor} />
+        <StatCard label="Max"     value={maxValue}           unit={unit} color={chartColor} />
       </div>
 
-      {/* Chart */}
       <MetricLineChart
         data={data}
         loading={loadingData}
