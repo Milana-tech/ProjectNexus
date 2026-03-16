@@ -105,10 +105,30 @@ def get_config():
         "default_range_index": 1,
     }
 
+# Metrics — list metrics for a zone/entity (used by frontend metric selector)
 
-# ---------------------------------------------------------------------------
+@app.get("/metrics")
+def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID")):
+    """Returns all metrics belonging to devices in the given zone."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM zones WHERE id = %s", (entity_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail=f"Zone {entity_id} not found.")
+            cur.execute(
+                """
+                SELECT m.id, m.name, m.unit
+                FROM metrics m
+                JOIN devices d ON d.id = m.device_id
+                WHERE d.zone_id = %s
+                ORDER BY m.name
+                """,
+                (entity_id,),
+            )
+            rows = cur.fetchall()
+    return [{"id": row["id"], "name": row["name"], "unit": row["unit"] or ""} for row in rows]
+
 # Models for bulk ingest
-# ---------------------------------------------------------------------------
 
 class Reading(BaseModel):
     metric_id: int
