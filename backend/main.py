@@ -439,15 +439,7 @@ def run_anomaly(
 
 
 @app.get("/anomalies")
-return [
-    {
-        "timestamp": r["timestamp"].isoformat(),
-        "score": r["anomaly_score"],
-        "flag": r["anomaly_flag"],
-    }
-
-    for r in rows
-]
+async def get_anomalies(metric_id: str, start: str, end: str):
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -488,14 +480,14 @@ return [
 
     return [
         {
-            "timestamp": str(r["timestamp"]),
+            "timestamp": r["timestamp"].isoformat(),
             "score": r["anomaly_score"],
             "flag": r["anomaly_flag"],
         }
         for r in rows
     ]
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------x----------------------
 # Entry point (for local dev without Docker)
 # ---------------------------------------------------------------------------
 
