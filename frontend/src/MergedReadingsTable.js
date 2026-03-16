@@ -80,42 +80,55 @@ export default function MergedReadingsTable() {
         const err = validate();
         if (err) { setError(err); return; }
         const { start, end } = getRange();
+
+        // Clear all previous state before new fetch
         setError(null);
         setNoAnomalyRun(false);
-        setLoading(true);
+        setRows([]);
         setFetched(false);
+        setMetricName("");
+        setLoading(true);
 
-        try {
+        try 
+        {
             // Fetch both in parallel
             const [readingsRes, anomaliesRes] = await Promise.all([
                 fetch(`${API_URL}/readings?${new URLSearchParams({ metric_id: metricId, start, end })}`),
                 fetch(`${API_URL}/anomalies?${new URLSearchParams({ metric_id: metricId, start, end })}`),
             ]);
 
-            // Handle readings error
+            // Readings failure is fatal show error and stop
             if (!readingsRes.ok) {
-                const b = await readingsRes.json();
-                throw new Error(b.detail || `Readings error ${readingsRes.status}`);
+                const b = await readingsRes.json().catch(() => ({}));
+                throw new Error(b.detail || `Could not load readings (${readingsRes.status}). Please try again.`);
             }
 
             const readingsData = await readingsRes.json();
             const readings = readingsData.readings || [];
             setMetricName(readingsData.metric?.name || `Metric ${metricId}`);
 
-            // Handle anomalies — non-fatal if it fails
+            // Anomalies failure is non-fatal show readings with notice
             let anomalies = [];
-            if (anomaliesRes.ok) {
-                anomalies = await anomaliesRes.json();
-                if (anomalies.length === 0) setNoAnomalyRun(true);
-            } else {
+            try {
+                if (anomaliesRes.ok) {
+                    anomalies = await anomaliesRes.json();
+                    if (anomalies.length === 0) setNoAnomalyRun(true);
+                } else {
+                    setNoAnomalyRun(true);
+                }
+            } catch {
+                // Network-level anomaly fetch failure still show readings
                 setNoAnomalyRun(true);
             }
 
             setRows(mergeData(readings, anomalies));
             setFetched(true);
+
         } catch (e) {
-            setError(e.message);
+            // Only readings errors reach here
+            setError(e.message || "Something went wrong. Please try again.");
             setRows([]);
+            setFetched(false);
         } finally {
             setLoading(false);
         }
