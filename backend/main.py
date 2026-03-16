@@ -444,7 +444,6 @@ def get_anomalies(
     start: str     = Query(..., description="Start datetime, ISO 8601"),
     end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
-    # Validate start/end as strings so return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -457,7 +456,6 @@ def get_anomalies(
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'")
 
-    # Validate metric_id is numeric
     try:
         mid = int(metric_id)
     except ValueError:
@@ -466,6 +464,11 @@ def get_anomalies(
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                # check metric exists first
+                cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail=f"metric_id '{mid}' not found.")
+
                 cur.execute("""
                     SELECT timestamp, anomaly_score, anomaly_flag
                     FROM anomaly_results
@@ -474,6 +477,8 @@ def get_anomalies(
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
@@ -485,7 +490,6 @@ def get_anomalies(
         }
         for r in rows
     ]
-
 
 # ---------------------------------------------------------------------------
 # Entry point (for local dev without Docker)
