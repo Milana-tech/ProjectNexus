@@ -76,9 +76,13 @@ def _extract_field_index_from_loc(loc: tuple[Any, ...]) -> tuple[str | None, int
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict) and set(exc.detail.keys()) == {"error", "field", "index"}:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+
     if 400 <= exc.status_code <= 499:
         detail = _coerce_4xx_detail(exc.detail)
         return JSONResponse(status_code=exc.status_code, content=detail)
+
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -114,7 +118,7 @@ def health():
 def db_check():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        return {"ok": False, "error": "DATABASE_URL is not set"}
+        raise HTTPException(status_code=503, detail=_error_schema("DATABASE_URL is not set", field=None))
     try:
         with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
@@ -122,7 +126,7 @@ def db_check():
                 (now,) = cur.fetchone()
         return {"ok": True, "now": str(now)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=_error_schema(str(e), field=None))
 
 
 # ---------------------------------------------------------------------------
