@@ -4,6 +4,7 @@
     "php": ">=8.2",
     "ext-ctype": "*",
     "ext-iconv": "*",
+    "firebase/php-jwt": "^6.10",
     "symfony/framework-bundle": "^7.1",
     "symfony/runtime": "^7.1",
     "symfony/dotenv": "^7.1",
