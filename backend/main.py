@@ -312,7 +312,6 @@ def get_readings(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a positive numeric id.")
 
-    # Validate start/end 400 not 422
     start_dt = None
     end_dt   = None
     if start:
