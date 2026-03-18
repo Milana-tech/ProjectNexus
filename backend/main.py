@@ -312,22 +312,21 @@ def get_readings(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a positive numeric id.")
 
-    # Validate start/end 400 not 422
     start_dt = None
     end_dt   = None
     if start:
         try:
-            start_dt = datetime.fromisoformat(start)
+            start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
-    if end:
+            raise HTTPException(status_code=422, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
         try:
-            end_dt = datetime.fromisoformat(end)
+            end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+            raise HTTPException(status_code=422, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
-    if start_dt and end_dt and start_dt >= end_dt:
-        raise HTTPException(status_code=400, detail="'start' must be before 'end'.")
+    # simplified
+    if start_dt >= end_dt:
+        raise HTTPException(status_code=400, detail="'start' must be strictly before 'end'.")
 
     try:
         with get_conn() as conn:
@@ -389,13 +388,12 @@ def run_anomaly(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Validate start/end as strings return 400 not 422
     try:
-        start_dt = datetime.fromisoformat(start)
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=422, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
     try:
-        end_dt = datetime.fromisoformat(end)
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=422, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
@@ -473,13 +471,13 @@ def run_anomaly(
 @app.get("/anomalies")
 async def get_anomalies(metric_id: str, start: str, end: str):
     try:
-        start_dt = datetime.fromisoformat(start)
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=422, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
     try:
-        end_dt = datetime.fromisoformat(end)
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=422, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'")
