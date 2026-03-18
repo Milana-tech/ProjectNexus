@@ -13,7 +13,7 @@ import "./dashboard.css";
 
 const API_BASE =
   process.env.REACT_APP_API_URL ||
-  "http://localhost:8000";
+  "http://localhost:8001";
 
 const COLOR_PALETTE = [
   "#2563eb",
