@@ -37,10 +37,11 @@ class MeasurementRepository:
         
         with self.conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT r.id, r.metric_id, r.timestamp, r.value, r.created_at, COALESCE(ar.anomaly_flag, false) as is_anomaly
+                f"""
+                SELECT r.id, r.metric_id, r.timestamp, r.value, r.created_at, 
+                       EXISTS(SELECT 1 FROM anomaly_results ar 
+                              WHERE ar.metric_id = r.metric_id AND ar.timestamp = r.timestamp AND ar.anomaly_flag = true) as is_anomaly
                 FROM readings r
-                LEFT JOIN anomaly_results ar ON ar.metric_id = r.metric_id AND ar.timestamp = r.timestamp
                 WHERE {' AND '.join(conditions)}
                 ORDER BY r.timestamp DESC LIMIT %s
                 """,
@@ -66,7 +67,7 @@ class MeasurementRepository:
         
         with self.conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT r.timestamp, m.name AS metric, r.value
                 FROM readings r
                 JOIN metrics m ON m.id = r.metric_id
@@ -107,7 +108,7 @@ class AnomalyRepository:
         
         with self.conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT metric_id, timestamp, anomaly_score, anomaly_flag, metadata
                 FROM anomaly_results
                 WHERE {' AND '.join(conditions)}

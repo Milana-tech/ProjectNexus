@@ -8,6 +8,7 @@ import psycopg
 from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator, model_validator
 from anomaly import get_algorithm
 from repositories import MeasurementRepository, AnomalyRepository
@@ -41,12 +42,18 @@ app.add_middleware(
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc: HTTPException):
     log.warning("HTTP %s: %s", exc.status_code, exc.detail)
-    return {"error": {"status_code": exc.status_code, "detail": exc.detail}}
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": {"status_code": exc.status_code, "detail": exc.detail}},
+    )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc: Exception):
     log.exception("Unhandled exception")
-    return {"error": {"status_code": 500, "detail": "Internal server error"}}
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"status_code": 500, "detail": "Internal server error"}},
+    )
 
 # ---------------------------------------------------------------------------
 # Health / DB check
@@ -437,7 +444,7 @@ def run_anomaly(
                 algo_row = cur.fetchone()
                 if algo_row is None:
                     raise HTTPException(status_code=400, detail=f"Algorithm '{algorithm}' not registered in algorithms table.")
-                algorithm_id = algo_row[0]  # Fix: Use algo_row[0] instead of algo_row["id"]
+                algorithm_id = algo_row["id"]
 
                 # Fetch readings from correct table
                 cur.execute("""
