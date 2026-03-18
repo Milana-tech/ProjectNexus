@@ -14,7 +14,7 @@ const COLOR_PALETTE = [
 
 const MAX_METRICS = 4;
 
-const DEMO_ENTITY_NAME = "Zone A";
+const DEMO_ENTITY_NAME = "Zone 1";
 const DEMO_METRIC_NAME = "temperature";
 const DEMO_RANGE_MS    = 6 * 60 * 60 * 1000;
 
@@ -285,7 +285,7 @@ export default function Dashboard() {
     stopPolling(slotId);
     loadSlot(slotId, metricId, start, end);
     intervalsRef.current[slotId] = setInterval(() => loadSlot(slotId, metricId, start, end), 10_000);
-  }, [loadSlot]);
+  }, [loadSlot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function stopPolling(slotId) {
     clearInterval(intervalsRef.current[slotId]);
@@ -308,8 +308,9 @@ export default function Dashboard() {
     metricSlots.forEach((slot) => {
       if (slot.metric) startPolling(slot.id, slot.metric.id, fromTs, toTs);
     });
-  }, [fromTs, toTs, rangeError]);
+  }, [fromTs, toTs, rangeError]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Bootstrap
   useEffect(() => {
     setLoadingEntities(true);
     Promise.all([fetchConfig(), fetchEntities()])
@@ -325,10 +326,10 @@ export default function Dashboard() {
         if (config?.app_title) setAppTitle(config.app_title);
         setEntities(ents);
         setLoadingEntities(false);
-        activateDemo(ents); 
+        activateDemo(ents); // auto-load demo on start
       })
       .catch((err) => { setEntityError(err.message ?? "Could not load entities."); setLoadingEntities(false); });
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fires only when user manually picks entity — NOT called by activateDemo
   useEffect(() => {
@@ -343,8 +344,9 @@ export default function Dashboard() {
     fetchMetrics(selectedEntity)
       .then((ms) => { setMetrics(ms); setLoadingMetrics(false); })
       .catch((err) => { setMetricError(err.message ?? "Could not load metrics."); setLoadingMetrics(false); });
-  }, [selectedEntity]);
+  }, [selectedEntity]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // activateDemo never calls setSelectedEntity — so the entity useEffect never fires
   async function activateDemo(allEntities) {
     const entity = allEntities.find((e) => e.label.toLowerCase() === DEMO_ENTITY_NAME.toLowerCase());
     if (!entity) return;
@@ -357,8 +359,10 @@ export default function Dashboard() {
     const demoFrom = now - DEMO_RANGE_MS;
     const demoTo   = now;
 
+    // Stop all current polling
     Object.keys(intervalsRef.current).forEach(stopPolling);
 
+    // Set state directly — selectedEntity stays untouched
     setMetrics(ms);
     setFromTs(demoFrom);
     setToTs(demoTo);
@@ -418,7 +422,7 @@ export default function Dashboard() {
 
   return (
     <div className="dash">
-      <div className="header">
+      <div className="header" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div className="header-badge"><span className="pulse" />Live Monitor</div>
           <h1 style={{ marginTop: 8 }}>{appTitle}</h1>
@@ -428,6 +432,11 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+        <button onClick={() => activateDemo(entities)} style={{
+          background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac",
+          borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600,
+          cursor: "pointer", alignSelf: "flex-start",
+        }}>🌱 Load Demo</button>
       </div>
 
       {demoMode && showDemoBanner && <DemoBanner onDismiss={() => setShowDemoBanner(false)} />}
@@ -474,15 +483,6 @@ export default function Dashboard() {
             style={rangeError ? { borderColor: "#ef4444", outline: "none" } : {}} />
         </div>
 
-        <div className="divider" />
-
-        <div className="control-group">
-          <label>&nbsp;</label>
-          <button onClick={() => activateDemo(entities)} style={{
-            background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac",
-            borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}>🌱 Load Demo</button>
-        </div>
       </div>
 
       {rangeError && (
