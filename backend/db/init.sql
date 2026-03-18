@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS forecast_results (
 -- Indexes for readings
 CREATE INDEX IF NOT EXISTS idx_readings_metric_id ON readings(metric_id);
 CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_readings_metric_timestamp ON readings(metric_id, timestamp ASC);
 
 -- Indexes for anomaly_results
 CREATE INDEX IF NOT EXISTS idx_anomaly_results_metric_id ON anomaly_results(metric_id);

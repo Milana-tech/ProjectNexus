@@ -41,6 +41,24 @@ def get_conn() -> psycopg.Connection:
     return psycopg.connect(database_url, row_factory=dict_row)
 
 
+def _parse_iso_datetime_or_400(raw_value: str, field_name: str) -> datetime:
+    value = raw_value.strip()
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid {field_name}. Use ISO 8601 datetime.",
+        ) from exc
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 # ---------------------------------------------------------------------------
 # Health / DB check
 # ---------------------------------------------------------------------------
@@ -306,10 +324,28 @@ def get_readings_by_zone(
 @app.get("/readings")
 def get_readings(
     metric_id: int = Query(..., gt=0),
-    start: Optional[datetime] = Query(None),
-    end: Optional[datetime] = Query(None),
-    limit: int = Query(500, ge=1, le=5000),
-) -> dict:
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    # Backward-compatible aliases for existing frontend clients.
+    start: Optional[str] = Query(None, include_in_schema=False),
+    end: Optional[str] = Query(None, include_in_schema=False),
+    limit: int = Query(2000, ge=1, le=10000),
+) -> list[dict[str, Any]]:
+    start_raw = start_time if start_time is not None else start
+    end_raw = end_time if end_time is not None else end
+
+    if not start_raw or not end_raw:
+        raise HTTPException(
+            status_code=400,
+            detail="Both start_time and end_time query parameters are required.",
+        )
+
+    start_dt = _parse_iso_datetime_or_400(start_raw, "start_time")
+    end_dt = _parse_iso_datetime_or_400(end_raw, "end_time")
+
+    if end_dt < start_dt:
+        raise HTTPException(status_code=400, detail="end_time must be after or equal to start_time.")
+
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (metric_id,))
@@ -317,40 +353,24 @@ def get_readings(
             if not metric:
                 raise HTTPException(status_code=404, detail=f"metric_id {metric_id} not found.")
 
-            if start and start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            if end and end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if start and end and end < start:
-                raise HTTPException(status_code=422, detail="'end' must not be before 'start'.")
-
-            conditions = ["metric_id = %s"]
-            params: list = [metric_id]
-            if start:
-                conditions.append("timestamp >= %s")
-                params.append(start)
-            if end:
-                conditions.append("timestamp <= %s")
-                params.append(end)
-            params.append(limit)
-
             cur.execute(
                 "SELECT id, metric_id, timestamp, value, created_at "
                 "FROM readings "
-                f"WHERE {' AND '.join(conditions)} "
-                "ORDER BY timestamp DESC LIMIT %s",
-                params,
+                "WHERE metric_id = %s "
+                "AND timestamp BETWEEN %s AND %s "
+                "ORDER BY timestamp ASC LIMIT %s",
+                (metric_id, start_dt, end_dt, limit),
             )
             rows = cur.fetchall()
 
-    return {
-        "metric": {"id": metric["id"], "name": metric["name"], "unit": metric["unit"]},
-        "count": len(rows),
-        "readings": [
-            {"id": r["id"], "timestamp": r["timestamp"].isoformat(), "value": r["value"]}
-            for r in rows
-        ],
-    }
+    return [
+        {
+            "timestamp": r["timestamp"].isoformat(),
+            "value": r["value"],
+            "metric_id": r["metric_id"],
+        }
+        for r in rows
+    ]
 
 
 # ---------------------------------------------------------------------------
