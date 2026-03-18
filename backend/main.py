@@ -317,12 +317,12 @@ def get_readings(
     end_dt   = None
     if start:
         try:
-            start_dt = datetime.fromisoformat(start)
+            start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
     if end:
         try:
-            end_dt = datetime.fromisoformat(end)
+            end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
@@ -482,7 +482,7 @@ async def get_anomalies(metric_id: str, start: str, end: str):
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
-    if start_dt >= end_dt:
+    if start_dt > end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'")
 
     try:
@@ -506,6 +506,12 @@ async def get_anomalies(metric_id: str, start: str, end: str):
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+                
+                if not rows:
+                    raise HTTPException(
+                    status_code=404,
+                    detail=f"No anomaly results found for metric_id '{mid}' in the given time range."
+                    )
     except HTTPException:
         raise
     except Exception as e:
