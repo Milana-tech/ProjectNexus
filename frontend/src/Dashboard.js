@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   LineChart,
   Line,
@@ -14,13 +14,13 @@ import "./dashboard.css";
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 const COLOR_PALETTE = [
-  "#2563eb", 
-  "#10b981", 
-  "#f59e0b", 
-  "#ef4444", 
-  "#8b5cf6", 
-  "#06b6d4", 
-  "#f97316", 
+  "#2563eb",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#f97316",
   "#84cc16",
 ];
 
@@ -29,8 +29,6 @@ const MAX_METRICS = 4;
 function slotColor(index) {
   return COLOR_PALETTE[index % COLOR_PALETTE.length];
 }
-
-// ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function fetchEntities() {
   const res = await fetch(`${API_BASE}/entities`);
@@ -52,74 +50,22 @@ async function fetchConfig() {
   return res.json();
 }
 
-// ─── useReadings hook (single metric) ────────────────────────────────────────
-
-function useReadings({ metricId, start, end, skip }) {
-  const [data, setData]       = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState(null);
-  const abortRef              = useRef(null);
-
-  const load = useCallback(async () => {
-    if (!metricId || !start || !end || skip) {
-      setData([]);
-      return;
-    }
-    if (abortRef.current) abortRef.current.abort();
-    abortRef.current = new AbortController();
-    setLoading(true);
-    setError(null);
-    try {
-      const qs = new URLSearchParams({
-        metric_id: String(metricId),
-        start:     new Date(start).toISOString(),
-        end:       new Date(end).toISOString(),
-        limit:     "2000",
-      });
-      const res = await fetch(`${API_BASE}/readings?${qs}`, {
-        signal: abortRef.current.signal,
-      });
-      if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
-      const json = await res.json();
-      const readings = Array.isArray(json.readings) ? json.readings : [];
-      setData(readings.map((r) => ({
-        time:  new Date(r.timestamp).getTime(),
-        value: r.value,
-      })));
-    } catch (err) {
-      if (err.name === "AbortError") return;
-      setError(err.message ?? "Failed to load readings.");
-      setData([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [metricId, start, end, skip]);
-
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 10_000);
-    return () => {
-      clearInterval(interval);
-      if (abortRef.current) abortRef.current.abort();
-    };
-  }, [load]);
-
-  return { data, loading, error };
-}
-
-// ─── MetricSlot ───────────────────────────────────────────────────────────────
-
-function MetricSlot({ slot, metrics, fromTs, toTs, skip, onRemove, onChangeMetric }) {
-  const { data, loading, error } = useReadings({
-    metricId: slot.metric?.id ?? null,
-    start:    fromTs,
-    end:      toTs,
-    skip,
+async function fetchReadings(metricId, start, end) {
+  const qs = new URLSearchParams({
+    metric_id: String(metricId),
+    start:     new Date(start).toISOString(),
+    end:       new Date(end).toISOString(),
+    limit:     "2000",
   });
-  return { data, loading, error, slot };
+  const res = await fetch(`${API_BASE}/readings?${qs}`);
+  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
+  const json = await res.json();
+  const readings = Array.isArray(json.readings) ? json.readings : [];
+  return readings.map((r) => ({
+    time:  new Date(r.timestamp).getTime(),
+    value: r.value,
+  }));
 }
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
 
 function toLocalDatetime(ts) {
   if (!ts || isNaN(ts)) return "";
@@ -141,33 +87,28 @@ function formatTick(t, range) {
   return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
 }
 
-// ─── MultiMetricChart ─────────────────────────────────────────────────────────
-
 function MultiMetricChart({ slots, slotDataMap, fromTs, toTs }) {
   const range = toTs - fromTs;
   const ticks = generateTicks(fromTs, toTs, 6);
 
-  const activeSlots = slots.filter((s) => s.metric);
-
+  const activeSlots   = slots.filter((s) => s.metric);
   const distinctUnits = [...new Set(activeSlots.map((s) => s.metric.unit || ""))];
-  const multiUnit     = distinctUnits.length > 2;
-  const dualUnit      = distinctUnits.length === 2;
-  const normalize     = multiUnit;
+  const normalize     = distinctUnits.length > 2;
 
   const allTimes = [...new Set(
-    slots.flatMap((s) => (slotDataMap[s.id] ?? []).map((d) => d.time))
+    slots.flatMap((s) => (slotDataMap[s.id]?.data ?? []).map((d) => d.time))
   )].sort((a, b) => a - b);
 
   const slotMax = {};
   slots.forEach((s) => {
-    const vals = (slotDataMap[s.id] ?? []).map((d) => d.value);
+    const vals = (slotDataMap[s.id]?.data ?? []).map((d) => d.value);
     slotMax[s.id] = vals.length ? Math.max(...vals) : 1;
   });
 
   const chartData = allTimes.map((t) => {
     const point = { time: t };
     slots.forEach((s) => {
-      const entry = (slotDataMap[s.id] ?? []).find((d) => d.time === t);
+      const entry = (slotDataMap[s.id]?.data ?? []).find((d) => d.time === t);
       if (entry !== undefined) {
         point[`metric_${s.id}`] = normalize
           ? parseFloat(((entry.value / (slotMax[s.id] || 1)) * 100).toFixed(2))
@@ -177,7 +118,7 @@ function MultiMetricChart({ slots, slotDataMap, fromTs, toTs }) {
     return point;
   });
 
-  const anyLoading = slots.some((s) => slotDataMap[`loading_${s.id}`]);
+  const anyLoading = slots.some((s) => slotDataMap[s.id]?.loading);
   const hasData    = chartData.length > 0;
 
   const unitAxisMap = {};
@@ -301,8 +242,8 @@ function MultiMetricChart({ slots, slotDataMap, fromTs, toTs }) {
 
             <Legend
               wrapperStyle={{ fontFamily: "Space Mono", fontSize: 11, paddingTop: 12, color: "#64748b" }}
-              />
-              
+            />
+
             {slots.map((slot, idx) => {
               if (!slot.metric) return null;
               const yId = normalize
@@ -330,8 +271,6 @@ function MultiMetricChart({ slots, slotDataMap, fromTs, toTs }) {
   );
 }
 
-// ─── MetricRow ────────────────────────────────────────────────────────────────
-
 function MetricRow({ slot, index, metrics, loadingMetrics, onRemove, onChangeMetric }) {
   const color = slotColor(index);
   return (
@@ -349,7 +288,6 @@ function MetricRow({ slot, index, metrics, loadingMetrics, onRemove, onChangeMet
         width: 12, height: 12, borderRadius: "50%",
         background: color, flexShrink: 0,
       }} />
-
       <select
         value={slot.metric?.id ?? ""}
         onChange={(e) => {
@@ -366,7 +304,6 @@ function MetricRow({ slot, index, metrics, loadingMetrics, onRemove, onChangeMet
           </option>
         ))}
       </select>
-
       <button
         onClick={() => onRemove(slot.id)}
         title="Remove this metric"
@@ -404,23 +341,6 @@ function DropdownError({ message }) {
   );
 }
 
-// ─── useMultiReadings ─────────────────────────────────────────────────────────
-
-function SlotReader({ slot, fromTs, toTs, skip, onResult }) {
-  const { data, loading, error } = useReadings({
-    metricId: slot.metric?.id ?? null,
-    start:    fromTs,
-    end:      toTs,
-    skip:     skip || !slot.metric,
-  });
-  useEffect(() => {
-    onResult(slot.id, data, loading, error);
-  });
-  return null;
-}
-
-// ─── main dashboard ───────────────────────────────────────────────────────────
-
 let slotCounter = 0;
 function newSlotId() { return ++slotCounter; }
 
@@ -442,12 +362,89 @@ export default function Dashboard() {
   const [metricError,     setMetricError]     = useState(null);
 
   const [metricSlots,     setMetricSlots]     = useState([]);
-
   const [slotDataMap,     setSlotDataMap]     = useState({});
-
   const [lastUpdated,     setLastUpdated]     = useState(null);
 
-  // ── bootstrap ────────────────────────────────────────────────────────────
+  const intervalsRef = useRef({});
+  const abortRefs    = useRef({});
+
+  const loadSlot = useCallback(async (slotId, metricId, start, end) => {
+    if (abortRefs.current[slotId]) abortRefs.current[slotId].abort();
+    abortRefs.current[slotId] = new AbortController();
+
+    setSlotDataMap((prev) => ({
+      ...prev,
+      [slotId]: { ...(prev[slotId] ?? {}), loading: true, error: null },
+    }));
+
+    try {
+      const qs = new URLSearchParams({
+        metric_id: String(metricId),
+        start:     new Date(start).toISOString(),
+        end:       new Date(end).toISOString(),
+        limit:     "2000",
+      });
+      const res = await fetch(`${API_BASE}/readings?${qs}`, {
+        signal: abortRefs.current[slotId].signal,
+      });
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+      const json = await res.json();
+      const data = (Array.isArray(json.readings) ? json.readings : []).map((r) => ({
+        time:  new Date(r.timestamp).getTime(),
+        value: r.value,
+      }));
+      setSlotDataMap((prev) => ({
+        ...prev,
+        [slotId]: { data, loading: false, error: null },
+      }));
+      if (data.length > 0) setLastUpdated(Date.now());
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      setSlotDataMap((prev) => ({
+        ...prev,
+        [slotId]: { data: [], loading: false, error: err.message },
+      }));
+    }
+  }, []);
+
+  const startPolling = useCallback((slotId, metricId, start, end) => {
+    stopPolling(slotId);
+    loadSlot(slotId, metricId, start, end);
+    intervalsRef.current[slotId] = setInterval(
+      () => loadSlot(slotId, metricId, start, end),
+      10_000
+    );
+  }, [loadSlot]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function stopPolling(slotId) {
+    if (intervalsRef.current[slotId]) {
+      clearInterval(intervalsRef.current[slotId]);
+      delete intervalsRef.current[slotId];
+    }
+    if (abortRefs.current[slotId]) {
+      abortRefs.current[slotId].abort();
+      delete abortRefs.current[slotId];
+    }
+  }
+
+  useEffect(() => {
+    const intervals = intervalsRef.current;
+    const aborts    = abortRefs.current;
+    return () => {
+      Object.keys(intervals).forEach((id) => clearInterval(intervals[id]));
+      Object.keys(aborts).forEach((id) => aborts[id].abort());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (rangeError) return;
+    metricSlots.forEach((slot) => {
+      if (slot.metric) {
+        startPolling(slot.id, slot.metric.id, fromTs, toTs);
+      }
+    });
+  }, [fromTs, toTs, rangeError]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     setLoadingEntities(true);
     setEntityError(null);
@@ -477,7 +474,10 @@ export default function Dashboard() {
     setLoadingMetrics(true);
     setMetricError(null);
     setMetrics([]);
-    setMetricSlots([]);
+    setMetricSlots((prev) => {
+      prev.forEach((s) => stopPolling(s.id));
+      return [];
+    });
     setSlotDataMap({});
 
     fetchMetrics(selectedEntity)
@@ -489,20 +489,20 @@ export default function Dashboard() {
         setMetricError(err.message ?? "Could not load metrics.");
         setLoadingMetrics(false);
       });
-  }, [selectedEntity]);
+  }, [selectedEntity]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function addSlot() {
     if (metricSlots.length >= MAX_METRICS) return;
-    setMetricSlots((prev) => [...prev, { id: newSlotId(), metric: null }]);
+    const id = newSlotId();
+    setMetricSlots((prev) => [...prev, { id, metric: null }]);
   }
 
   function removeSlot(slotId) {
+    stopPolling(slotId);
     setMetricSlots((prev) => prev.filter((s) => s.id !== slotId));
     setSlotDataMap((prev) => {
       const next = { ...prev };
       delete next[slotId];
-      delete next[`loading_${slotId}`];
-      delete next[`error_${slotId}`];
       return next;
     });
   }
@@ -511,24 +511,13 @@ export default function Dashboard() {
     setMetricSlots((prev) =>
       prev.map((s) => s.id === slotId ? { ...s, metric } : s)
     );
+    if (metric && !rangeError) {
+      startPolling(slotId, metric.id, fromTs, toTs);
+    } else {
+      stopPolling(slotId);
+      setSlotDataMap((prev) => ({ ...prev, [slotId]: { data: [], loading: false, error: null } }));
+    }
   }
-
-  const handleSlotResult = useCallback((slotId, data, loading, error) => {
-    setSlotDataMap((prev) => {
-      if (
-        prev[slotId] === data &&
-        prev[`loading_${slotId}`] === loading &&
-        prev[`error_${slotId}`] === error
-      ) return prev;
-      return {
-        ...prev,
-        [slotId]:              data,
-        [`loading_${slotId}`]: loading,
-        [`error_${slotId}`]:   error,
-      };
-    });
-    if (data.length > 0) setLastUpdated(Date.now());
-  }, []);
 
   function applyQuickRange(idx) {
     const now = Date.now();
@@ -554,28 +543,11 @@ export default function Dashboard() {
     setRangeError(ts <= fromTs ? "End must be after start." : null);
   }
 
-  const allValues = metricSlots.flatMap((s) =>
-    (slotDataMap[s.id] ?? []).map((d) => d.value)
-  );
-  const latestValues = metricSlots
-    .map((s) => (slotDataMap[s.id] ?? []).at(-1)?.value)
-    .filter((v) => v !== undefined);
-
+  const allValues  = metricSlots.flatMap((s) => (slotDataMap[s.id]?.data ?? []).map((d) => d.value));
   const statsColor = slotColor(0);
 
   return (
     <div className="dash">
-      {metricSlots.map((slot) => (
-        <SlotReader
-          key={slot.id}
-          slot={slot}
-          fromTs={fromTs}
-          toTs={toTs}
-          skip={!!rangeError}
-          onResult={handleSlotResult}
-        />
-      ))}
-
       <div className="header">
         <div>
           <div className="header-badge"><span className="pulse" />Live Monitor</div>
