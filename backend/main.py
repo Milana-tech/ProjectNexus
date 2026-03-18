@@ -326,7 +326,7 @@ def get_readings(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
 
-    if start_dt and end_dt and start_dt >= end_dt:
+    if start_dt and end_dt and start_dt > end_dt:
         raise HTTPException(status_code=400, detail="'start' must be before 'end'.")
 
     try:
@@ -356,7 +356,12 @@ def get_readings(
                     params,
                 )
                 rows = cur.fetchall()
-
+        if not rows:
+            raise HTTPException(
+            status_code=404,
+            detail=f"No readings found for metric_id '{mid}' in the given time range."
+            )
+            
     except HTTPException:
         raise
     except Exception as e:
