@@ -13,6 +13,39 @@ from pydantic import BaseModel, field_validator, model_validator
 from anomaly import get_algorithm
 from repositories import MeasurementRepository, AnomalyRepository
 
+# Response Models for OpenAPI Documentation
+class Reading(BaseModel):
+    id: int
+    timestamp: str
+    value: float
+    is_anomaly: bool
+
+class Metric(BaseModel):
+    id: int
+    name: str
+    unit: str
+
+class ReadingsResponse(BaseModel):
+    metric: Metric
+    count: int
+    readings: list[Reading]
+
+class AnomalyResult(BaseModel):
+    timestamp: str
+    anomaly_score: float
+    anomaly_flag: bool
+    metadata: dict | None
+
+class AnomaliesResponse(BaseModel):
+    metric: Metric
+    count: int
+    anomalies: list[AnomalyResult]
+
+class ZoneReading(BaseModel):
+    timestamp: str
+    metric: str
+    value: float
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [api] %(levelname)s %(message)s",
@@ -270,7 +303,15 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
 # GET /readings/{zone_id}
 # ---------------------------------------------------------------------------
 
-@app.get("/readings/{zone_id}")
+@app.get("/readings/{zone_id}", 
+          summary="Get readings by zone", 
+          description="Retrieves time-series readings for a specific zone. Returns flat structure compatible with Milana frontend.",
+          response_model=list[ZoneReading],
+          responses={
+              200: {"description": "Successfully retrieved zone readings"},
+              400: {"description": "Invalid zone ID format"},
+              422: {"description": "Validation error"}
+          })
 def get_readings_by_zone(
     zone_id: str = Path(..., description="Zone ID (numeric)"),
     start: Optional[datetime] = Query(None, description="Start datetime (ISO 8601)"),
@@ -309,7 +350,16 @@ def get_readings_by_zone(
 # GET /readings
 # ---------------------------------------------------------------------------
 
-@app.get("/readings", summary="Retrieve readings for a metric", description="Returns time-series readings for the specified metric, optionally filtered by date range.")
+@app.get("/readings", 
+          summary="Retrieve readings for a metric", 
+          description="Returns time-series readings for the specified metric, optionally filtered by date range. Each reading includes anomaly detection status.",
+          response_model=ReadingsResponse,
+          responses={
+              200: {"description": "Successfully retrieved readings"},
+              400: {"description": "Invalid datetime format"},
+              404: {"description": "Metric not found"},
+              422: {"description": "Validation error"}
+          })
 def get_readings(
     metric_id: int = Query(..., gt=0, description="Metric ID (numeric)"),
     start: str     = Query(None, description="Start datetime, ISO 8601 (optional)"),
@@ -355,7 +405,16 @@ def get_readings(
 # GET /anomalies
 # ---------------------------------------------------------------------------
 
-@app.get("/anomalies", summary="Retrieve anomaly results for a metric", description="Returns anomaly detection results for the specified metric, optionally filtered by date range.")
+@app.get("/anomalies", 
+          summary="Retrieve anomaly results for a metric", 
+          description="Returns anomaly detection results for the specified metric, optionally filtered by date range. Includes anomaly scores and flags.",
+          response_model=AnomaliesResponse,
+          responses={
+              200: {"description": "Successfully retrieved anomaly results"},
+              400: {"description": "Invalid datetime format"},
+              404: {"description": "Metric not found"},
+              422: {"description": "Validation error"}
+          })
 def get_anomalies(
     metric_id: int = Query(..., gt=0, description="Metric ID (numeric)"),
     start: str     = Query(None, description="Start datetime, ISO 8601 (optional)"),
