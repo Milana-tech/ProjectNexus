@@ -67,7 +67,7 @@ function DemoBanner({ onDismiss }) {
       background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8,
       padding: "10px 16px", marginBottom: 16, fontSize: 13, color: "#1d4ed8",
     }}>
-      <span>🌱 <strong>Demo mode</strong> — showing seeded greenhouse data</span>
+      <span>🌱 <strong>Demo mode</strong> — showing seeded data</span>
       <button onClick={onDismiss} style={{
         background: "none", border: "none", cursor: "pointer",
         fontSize: 16, color: "#93c5fd", padding: "0 4px",
@@ -286,7 +286,7 @@ export default function Dashboard() {
     loadSlot(slotId, metricId, start, end);
     intervalsRef.current[slotId] = setInterval(() => loadSlot(slotId, metricId, start, end), 10_000);
   }, [loadSlot]); 
-  
+
   function stopPolling(slotId) {
     clearInterval(intervalsRef.current[slotId]);
     delete intervalsRef.current[slotId];
