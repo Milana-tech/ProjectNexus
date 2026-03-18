@@ -285,8 +285,8 @@ export default function Dashboard() {
     stopPolling(slotId);
     loadSlot(slotId, metricId, start, end);
     intervalsRef.current[slotId] = setInterval(() => loadSlot(slotId, metricId, start, end), 10_000);
-  }, [loadSlot]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  }, [loadSlot]); 
+  
   function stopPolling(slotId) {
     clearInterval(intervalsRef.current[slotId]);
     delete intervalsRef.current[slotId];
@@ -308,9 +308,8 @@ export default function Dashboard() {
     metricSlots.forEach((slot) => {
       if (slot.metric) startPolling(slot.id, slot.metric.id, fromTs, toTs);
     });
-  }, [fromTs, toTs, rangeError]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fromTs, toTs, rangeError]); 
 
-  // Bootstrap
   useEffect(() => {
     setLoadingEntities(true);
     Promise.all([fetchConfig(), fetchEntities()])
@@ -326,12 +325,11 @@ export default function Dashboard() {
         if (config?.app_title) setAppTitle(config.app_title);
         setEntities(ents);
         setLoadingEntities(false);
-        activateDemo(ents); // auto-load demo on start
+        activateDemo(ents); 
       })
       .catch((err) => { setEntityError(err.message ?? "Could not load entities."); setLoadingEntities(false); });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); 
 
-  // Fires only when user manually picks entity — NOT called by activateDemo
   useEffect(() => {
     if (!selectedEntity) return;
     setDemoMode(false);
@@ -344,9 +342,8 @@ export default function Dashboard() {
     fetchMetrics(selectedEntity)
       .then((ms) => { setMetrics(ms); setLoadingMetrics(false); })
       .catch((err) => { setMetricError(err.message ?? "Could not load metrics."); setLoadingMetrics(false); });
-  }, [selectedEntity]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedEntity]); 
 
-  // activateDemo never calls setSelectedEntity — so the entity useEffect never fires
   async function activateDemo(allEntities) {
     const entity = allEntities.find((e) => e.label.toLowerCase() === DEMO_ENTITY_NAME.toLowerCase());
     if (!entity) return;
@@ -359,10 +356,8 @@ export default function Dashboard() {
     const demoFrom = now - DEMO_RANGE_MS;
     const demoTo   = now;
 
-    // Stop all current polling
     Object.keys(intervalsRef.current).forEach(stopPolling);
 
-    // Set state directly — selectedEntity stays untouched
     setMetrics(ms);
     setFromTs(demoFrom);
     setToTs(demoTo);
