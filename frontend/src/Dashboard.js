@@ -11,25 +11,26 @@ import {
 } from "recharts";
 import "./dashboard.css";
 
-const API_BASE =
-  process.env.REACT_APP_API_URL ||
-  "http://localhost:8000";
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 const COLOR_PALETTE = [
-  "#2563eb",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#06b6d4",
-  "#f97316",
+  "#2563eb", 
+  "#10b981", 
+  "#f59e0b", 
+  "#ef4444", 
+  "#8b5cf6", 
+  "#06b6d4", 
+  "#f97316", 
   "#84cc16",
 ];
 
-function getMetricColor(metricName, allMetricNames) {
-  const idx = allMetricNames.indexOf(metricName);
-  return COLOR_PALETTE[idx % COLOR_PALETTE.length];
+const MAX_METRICS = 4;
+
+function slotColor(index) {
+  return COLOR_PALETTE[index % COLOR_PALETTE.length];
 }
+
+// ─── API helpers ──────────────────────────────────────────────────────────────
 
 async function fetchEntities() {
   const res = await fetch(`${API_BASE}/entities`);
@@ -51,7 +52,7 @@ async function fetchConfig() {
   return res.json();
 }
 
-// ─── useReadings hook ─────────────────────────────────────────────────────────
+// ─── useReadings hook (single metric) ────────────────────────────────────────
 
 function useReadings({ metricId, start, end, skip }) {
   const [data, setData]       = useState([]);
@@ -64,13 +65,10 @@ function useReadings({ metricId, start, end, skip }) {
       setData([]);
       return;
     }
-
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = new AbortController();
-
     setLoading(true);
     setError(null);
-
     try {
       const qs = new URLSearchParams({
         metric_id: String(metricId),
@@ -78,21 +76,16 @@ function useReadings({ metricId, start, end, skip }) {
         end:       new Date(end).toISOString(),
         limit:     "2000",
       });
-
       const res = await fetch(`${API_BASE}/readings?${qs}`, {
         signal: abortRef.current.signal,
       });
-
       if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
-
       const json = await res.json();
       const readings = Array.isArray(json.readings) ? json.readings : [];
-      setData(
-        readings.map((r) => ({
-          time:  new Date(r.timestamp).getTime(),
-          value: r.value,
-        }))
-      );
+      setData(readings.map((r) => ({
+        time:  new Date(r.timestamp).getTime(),
+        value: r.value,
+      })));
     } catch (err) {
       if (err.name === "AbortError") return;
       setError(err.message ?? "Failed to load readings.");
@@ -112,6 +105,18 @@ function useReadings({ metricId, start, end, skip }) {
   }, [load]);
 
   return { data, loading, error };
+}
+
+// ─── MetricSlot ───────────────────────────────────────────────────────────────
+
+function MetricSlot({ slot, metrics, fromTs, toTs, skip, onRemove, onChangeMetric }) {
+  const { data, loading, error } = useReadings({
+    metricId: slot.metric?.id ?? null,
+    start:    fromTs,
+    end:      toTs,
+    skip,
+  });
+  return { data, loading, error, slot };
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -136,56 +141,80 @@ function formatTick(t, range) {
   return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
 }
 
-// ─── sub-components ───────────────────────────────────────────────────────────
+// ─── MultiMetricChart ─────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload, label, unit }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.97)",
-      border: "1px solid #e2e8f0",
-      borderRadius: 10,
-      padding: "10px 14px",
-      fontSize: 13,
-      color: "#1e293b",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-    }}>
-      <div style={{ marginBottom: 6, color: "#94a3b8", fontSize: 11, fontFamily: "Space Mono, monospace" }}>
-        {new Date(label).toLocaleString()}
-      </div>
-      {payload.map((p) => (
-        <div key={p.dataKey} style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
-          <span style={{ color: "#475569" }}>{p.name}</span>
-          <strong style={{ color: p.color }}>
-            {p.value}{unit ? ` ${unit}` : ""}
-          </strong>
-        </div>
-      ))}
-    </div>
-  );
-}
+function MultiMetricChart({ slots, slotDataMap, fromTs, toTs }) {
+  const range = toTs - fromTs;
+  const ticks = generateTicks(fromTs, toTs, 6);
 
-function MetricLineChart({ data, loading, metricName, unit, fromTs, toTs, color }) {
-  const range        = toTs - fromTs;
-  const ticks        = generateTicks(fromTs, toTs, 6);
-  const yLabel       = unit ? `${metricName} (${unit})` : metricName || "Value";
-  const tickFormatter = unit ? (v) => `${v}${unit}` : (v) => String(v);
+  const activeSlots = slots.filter((s) => s.metric);
+
+  const distinctUnits = [...new Set(activeSlots.map((s) => s.metric.unit || ""))];
+  const multiUnit     = distinctUnits.length > 2;
+  const dualUnit      = distinctUnits.length === 2;
+  const normalize     = multiUnit;
+
+  const allTimes = [...new Set(
+    slots.flatMap((s) => (slotDataMap[s.id] ?? []).map((d) => d.time))
+  )].sort((a, b) => a - b);
+
+  const slotMax = {};
+  slots.forEach((s) => {
+    const vals = (slotDataMap[s.id] ?? []).map((d) => d.value);
+    slotMax[s.id] = vals.length ? Math.max(...vals) : 1;
+  });
+
+  const chartData = allTimes.map((t) => {
+    const point = { time: t };
+    slots.forEach((s) => {
+      const entry = (slotDataMap[s.id] ?? []).find((d) => d.time === t);
+      if (entry !== undefined) {
+        point[`metric_${s.id}`] = normalize
+          ? parseFloat(((entry.value / (slotMax[s.id] || 1)) * 100).toFixed(2))
+          : entry.value;
+      }
+    });
+    return point;
+  });
+
+  const anyLoading = slots.some((s) => slotDataMap[`loading_${s.id}`]);
+  const hasData    = chartData.length > 0;
+
+  const unitAxisMap = {};
+  if (!normalize) {
+    distinctUnits.forEach((u, i) => {
+      unitAxisMap[u] = i === 0 ? "left" : "right";
+    });
+  }
 
   return (
     <div className="chart-card">
-      <div className="chart-title">{yLabel}</div>
+      <div className="chart-title">
+        {activeSlots.length === 0
+          ? "Add metrics above to start plotting"
+          : activeSlots.map((s) => s.metric.name).join(" · ")}
+        {normalize && (
+          <span style={{ marginLeft: 8, fontSize: 11, color: "#94a3b8" }}>
+            (normalized %)
+          </span>
+        )}
+      </div>
 
-      {loading && (
+      {anyLoading && (
         <div className="loading-overlay">
           <div className="spinner" />FETCHING DATA…
         </div>
       )}
 
-      {!loading && data.length === 0 ? (
-        <div className="empty-state">No readings in selected range</div>
+      {!anyLoading && !hasData ? (
+        <div className="empty-state">
+          {activeSlots.length === 0
+            ? "Select at least one metric to see data"
+            : "No readings in selected range"}
+        </div>
       ) : (
-        <ResponsiveContainer width="100%" height={340}>
-          <LineChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+        <ResponsiveContainer width="100%" height={360}>
+          <LineChart data={chartData} margin={{ top: 5, right: 60, left: 0, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
             <XAxis
               dataKey="time"
@@ -198,42 +227,161 @@ function MetricLineChart({ data, loading, metricName, unit, fromTs, toTs, color 
               axisLine={{ stroke: "#e2e8f0" }}
               tickLine={false}
             />
-            <YAxis
-              domain={["auto", "auto"]}
-              tick={{ fill: color, fontSize: 11, fontFamily: "Space Mono" }}
-              axisLine={false}
-              tickLine={false}
-              width={50}
-              tickFormatter={tickFormatter}
-              label={{
-                value: yLabel,
-                angle: -90,
-                position: "insideLeft",
-                offset: 10,
-                style: { fill: "#94a3b8", fontSize: 10, fontFamily: "Space Mono" },
+
+            {normalize ? (
+              <YAxis
+                yAxisId="normalized"
+                domain={[0, 100]}
+                tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "Space Mono" }}
+                axisLine={false}
+                tickLine={false}
+                width={45}
+                tickFormatter={(v) => `${v}%`}
+                label={{
+                  value: "Normalized %",
+                  angle: -90,
+                  position: "insideLeft",
+                  offset: 10,
+                  style: { fill: "#94a3b8", fontSize: 10, fontFamily: "Space Mono" },
+                }}
+              />
+            ) : (
+              distinctUnits.map((unit, i) => (
+                <YAxis
+                  key={unit || `axis_${i}`}
+                  yAxisId={unitAxisMap[unit]}
+                  orientation={i === 0 ? "left" : "right"}
+                  domain={["auto", "auto"]}
+                  tick={{ fill: "#94a3b8", fontSize: 11, fontFamily: "Space Mono" }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={50}
+                  tickFormatter={(v) => unit ? `${v}${unit}` : String(v)}
+                  label={{
+                    value: unit || "Value",
+                    angle: -90,
+                    position: i === 0 ? "insideLeft" : "insideRight",
+                    offset: i === 0 ? 10 : -10,
+                    style: { fill: "#94a3b8", fontSize: 10, fontFamily: "Space Mono" },
+                  }}
+                />
+              ))
+            )}
+
+            <Tooltip
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                return (
+                  <div style={{
+                    background: "rgba(255,255,255,0.97)",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    fontSize: 13,
+                    color: "#1e293b",
+                    boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
+                  }}>
+                    <div style={{ marginBottom: 6, color: "#94a3b8", fontSize: 11, fontFamily: "Space Mono, monospace" }}>
+                      {new Date(label).toLocaleString()}
+                    </div>
+                    {payload.map((p) => {
+                      const slot = slots.find((s) => `metric_${s.id}` === p.dataKey);
+                      const unit = normalize ? "%" : (slot?.metric?.unit ?? "");
+                      return (
+                        <div key={p.dataKey} style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
+                          <span style={{ color: "#475569" }}>{p.name}</span>
+                          <strong style={{ color: p.color }}>{p.value}{unit ? ` ${unit}` : ""}</strong>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
               }}
             />
-            <Tooltip content={<CustomTooltip unit={unit} />} />
+
             <Legend
-              wrapperStyle={{
-                fontFamily: "Space Mono",
-                fontSize: 11,
-                paddingTop: 12,
-                color: "#64748b",
-              }}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              name={metricName || "Value"}
-              stroke={color}
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4, fill: color }}
-            />
+              wrapperStyle={{ fontFamily: "Space Mono", fontSize: 11, paddingTop: 12, color: "#64748b" }}
+              />
+              
+            {slots.map((slot, idx) => {
+              if (!slot.metric) return null;
+              const yId = normalize
+                ? "normalized"
+                : (unitAxisMap[slot.metric.unit || ""] ?? "left");
+              return (
+                <Line
+                  key={slot.id}
+                  yAxisId={yId}
+                  type="monotone"
+                  dataKey={`metric_${slot.id}`}
+                  name={slot.metric.name}
+                  stroke={slotColor(idx)}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, fill: slotColor(idx) }}
+                  connectNulls={false}
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
       )}
+    </div>
+  );
+}
+
+// ─── MetricRow ────────────────────────────────────────────────────────────────
+
+function MetricRow({ slot, index, metrics, loadingMetrics, onRemove, onChangeMetric }) {
+  const color = slotColor(index);
+  return (
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "6px 10px",
+      background: "#f8fafc",
+      borderRadius: 8,
+      border: `1px solid ${color}33`,
+      marginBottom: 6,
+    }}>
+      <div style={{
+        width: 12, height: 12, borderRadius: "50%",
+        background: color, flexShrink: 0,
+      }} />
+
+      <select
+        value={slot.metric?.id ?? ""}
+        onChange={(e) => {
+          const m = metrics.find((x) => x.id === e.target.value);
+          onChangeMetric(slot.id, m ?? null);
+        }}
+        disabled={loadingMetrics}
+        style={{ flex: 1, fontSize: 13 }}
+      >
+        <option value="">— select metric —</option>
+        {metrics.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}{m.unit ? ` (${m.unit})` : ""}
+          </option>
+        ))}
+      </select>
+
+      <button
+        onClick={() => onRemove(slot.id)}
+        title="Remove this metric"
+        style={{
+          background: "none",
+          border: "1px solid #e2e8f0",
+          borderRadius: 6,
+          cursor: "pointer",
+          padding: "2px 8px",
+          fontSize: 13,
+          color: "#64748b",
+        }}
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -252,19 +400,34 @@ function StatCard({ label, value, unit, color }) {
 
 function DropdownError({ message }) {
   return (
-    <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 4 }}>
-      ⚠️ {message}
-    </div>
+    <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 4 }}>⚠️ {message}</div>
   );
 }
 
+// ─── useMultiReadings ─────────────────────────────────────────────────────────
+
+function SlotReader({ slot, fromTs, toTs, skip, onResult }) {
+  const { data, loading, error } = useReadings({
+    metricId: slot.metric?.id ?? null,
+    start:    fromTs,
+    end:      toTs,
+    skip:     skip || !slot.metric,
+  });
+  useEffect(() => {
+    onResult(slot.id, data, loading, error);
+  });
+  return null;
+}
+
 // ─── main dashboard ───────────────────────────────────────────────────────────
+
+let slotCounter = 0;
+function newSlotId() { return ++slotCounter; }
 
 export default function Dashboard() {
   const [appTitle,        setAppTitle]        = useState("Project Nexus — Dashboard");
   const [quickRanges,     setQuickRanges]     = useState([]);
   const [activeRange,     setActiveRange]     = useState(1);
-
   const [fromTs,          setFromTs]          = useState(() => Date.now() - 6 * 60 * 60 * 1000);
   const [toTs,            setToTs]            = useState(() => Date.now());
   const [rangeError,      setRangeError]      = useState(null);
@@ -272,30 +435,27 @@ export default function Dashboard() {
   const [entities,        setEntities]        = useState([]);
   const [selectedEntity,  setSelectedEntity]  = useState(null);
   const [loadingEntities, setLoadingEntities] = useState(true);
-  const [entityError,     setEntityError]     = useState(null); 
+  const [entityError,     setEntityError]     = useState(null);
 
   const [metrics,         setMetrics]         = useState([]);
-  const [selectedMetric,  setSelectedMetric]  = useState(null);
   const [loadingMetrics,  setLoadingMetrics]  = useState(false);
-  const [metricError,     setMetricError]     = useState(null); 
+  const [metricError,     setMetricError]     = useState(null);
+
+  const [metricSlots,     setMetricSlots]     = useState([]);
+
+  const [slotDataMap,     setSlotDataMap]     = useState({});
 
   const [lastUpdated,     setLastUpdated]     = useState(null);
 
-  const metricNames = metrics.map((m) => m.name);
-  const chartColor  = selectedMetric
-    ? getMetricColor(selectedMetric.name, metricNames)
-    : COLOR_PALETTE[0];
-
+  // ── bootstrap ────────────────────────────────────────────────────────────
   useEffect(() => {
     setLoadingEntities(true);
     setEntityError(null);
-
     Promise.all([fetchConfig(), fetchEntities()])
       .then(([config, ents]) => {
         if (config?.quick_ranges) {
           setQuickRanges(config.quick_ranges);
-          const def = Number.isInteger(config.default_range_index)
-            ? config.default_range_index : 1;
+          const def = Number.isInteger(config.default_range_index) ? config.default_range_index : 1;
           setActiveRange(def);
           const now = Date.now();
           setToTs(now);
@@ -314,16 +474,15 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!selectedEntity) return;
-
     setLoadingMetrics(true);
     setMetricError(null);
     setMetrics([]);
-    setSelectedMetric(null);
+    setMetricSlots([]);
+    setSlotDataMap({});
 
     fetchMetrics(selectedEntity)
       .then((ms) => {
         setMetrics(ms);
-        if (ms.length) setSelectedMetric(ms[0]);
         setLoadingMetrics(false);
       })
       .catch((err) => {
@@ -332,19 +491,45 @@ export default function Dashboard() {
       });
   }, [selectedEntity]);
 
-  // ── readings ─────────────────────────────────────────────────────────────
-  const { data, loading: loadingData, error: dataError } = useReadings({
-    metricId: selectedMetric?.id ?? null,
-    start:    fromTs,
-    end:      toTs,
-    skip:     !!rangeError,
-  });
+  function addSlot() {
+    if (metricSlots.length >= MAX_METRICS) return;
+    setMetricSlots((prev) => [...prev, { id: newSlotId(), metric: null }]);
+  }
 
-  useEffect(() => {
+  function removeSlot(slotId) {
+    setMetricSlots((prev) => prev.filter((s) => s.id !== slotId));
+    setSlotDataMap((prev) => {
+      const next = { ...prev };
+      delete next[slotId];
+      delete next[`loading_${slotId}`];
+      delete next[`error_${slotId}`];
+      return next;
+    });
+  }
+
+  function changeSlotMetric(slotId, metric) {
+    setMetricSlots((prev) =>
+      prev.map((s) => s.id === slotId ? { ...s, metric } : s)
+    );
+  }
+
+  const handleSlotResult = useCallback((slotId, data, loading, error) => {
+    setSlotDataMap((prev) => {
+      if (
+        prev[slotId] === data &&
+        prev[`loading_${slotId}`] === loading &&
+        prev[`error_${slotId}`] === error
+      ) return prev;
+      return {
+        ...prev,
+        [slotId]:              data,
+        [`loading_${slotId}`]: loading,
+        [`error_${slotId}`]:   error,
+      };
+    });
     if (data.length > 0) setLastUpdated(Date.now());
-  }, [data]);
+  }, []);
 
-  // ── quick range ───────────────────────────────────────────────────────────
   function applyQuickRange(idx) {
     const now = Date.now();
     setActiveRange(idx);
@@ -369,26 +554,31 @@ export default function Dashboard() {
     setRangeError(ts <= fromTs ? "End must be after start." : null);
   }
 
-  const latestValue = data.at(-1)?.value;
-  const avgValue    = data.length
-    ? (data.reduce((s, r) => s + r.value, 0) / data.length).toFixed(2) : null;
-  const minValue    = data.length
-    ? Math.min(...data.map((r) => r.value)).toFixed(2) : null;
-  const maxValue    = data.length
-    ? Math.max(...data.map((r) => r.value)).toFixed(2) : null;
+  const allValues = metricSlots.flatMap((s) =>
+    (slotDataMap[s.id] ?? []).map((d) => d.value)
+  );
+  const latestValues = metricSlots
+    .map((s) => (slotDataMap[s.id] ?? []).at(-1)?.value)
+    .filter((v) => v !== undefined);
 
-  const unit       = selectedMetric?.unit ?? "";
-  const metricName = selectedMetric?.name ?? "";
+  const statsColor = slotColor(0);
 
   return (
     <div className="dash">
+      {metricSlots.map((slot) => (
+        <SlotReader
+          key={slot.id}
+          slot={slot}
+          fromTs={fromTs}
+          toTs={toTs}
+          skip={!!rangeError}
+          onResult={handleSlotResult}
+        />
+      ))}
 
-      {/* Header */}
       <div className="header">
         <div>
-          <div className="header-badge">
-            <span className="pulse" />Live Monitor
-          </div>
+          <div className="header-badge"><span className="pulse" />Live Monitor</div>
           <h1 style={{ marginTop: 8 }}>{appTitle}</h1>
           {lastUpdated && (
             <div style={{ marginTop: 6, color: "#64748b", fontSize: 13 }}>
@@ -398,72 +588,24 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {dataError && (
-        <div style={{
-          background: "#fee2e2", color: "#b91c1c",
-          padding: "12px 20px", borderRadius: 8,
-          marginBottom: 20, border: "1px solid #f87171",
-        }}>
-          <strong>Error:</strong> {dataError}
-        </div>
-      )}
-
       <div className="controls">
         <div className="control-group">
           <label htmlFor="entity-select">Entity</label>
           {loadingEntities ? (
-            <select id="entity-select" disabled>
-              <option>Loading entities…</option>
-            </select>
+            <select id="entity-select" disabled><option>Loading entities…</option></select>
           ) : (
             <select
               id="entity-select"
               value={selectedEntity ?? ""}
               onChange={(e) => setSelectedEntity(e.target.value)}
             >
-              {entities.length === 0 && !entityError && (
-                <option value="">No entities available</option>
-              )}
+              {entities.length === 0 && !entityError && <option value="">No entities available</option>}
               {entities.map((e) => (
                 <option key={e.id} value={e.id}>{e.label}</option>
               ))}
             </select>
           )}
-
           {entityError && <DropdownError message={entityError} />}
-        </div>
-
-        <div className="control-group">
-          <label htmlFor="metric-select">Metric</label>
-          {!selectedEntity ? (
-            <select id="metric-select" disabled>
-              <option>Select an entity first</option>
-            </select>
-          ) : loadingMetrics ? (
-            <select id="metric-select" disabled>
-              <option>Loading metrics…</option>
-            </select>
-          ) : (
-            <select
-              id="metric-select"
-              value={selectedMetric?.id ?? ""}
-              onChange={(e) => {
-                const m = metrics.find((x) => x.id === e.target.value);
-                setSelectedMetric(m ?? null);
-              }}
-            >
-              {metrics.length === 0 && !metricError && (
-                <option value="">No metrics available</option>
-              )}
-              {metrics.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}{m.unit ? ` (${m.unit})` : ""}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {metricError && <DropdownError message={metricError} />}
         </div>
 
         <div className="divider" />
@@ -495,7 +637,6 @@ export default function Dashboard() {
             style={rangeError ? { borderColor: "#ef4444", outline: "none" } : {}}
           />
         </div>
-
         <div className="control-group">
           <label htmlFor="to-date">To</label>
           <input
@@ -510,33 +651,93 @@ export default function Dashboard() {
 
       {rangeError && (
         <div style={{
-          background: "#fff7ed", color: "#c2410c",
-          padding: "10px 18px", borderRadius: 8, marginBottom: 16,
-          border: "1px solid #fdba74", fontSize: 13,
-          display: "flex", alignItems: "center", gap: 8,
+          background: "#fff7ed", color: "#c2410c", padding: "10px 18px",
+          borderRadius: 8, marginBottom: 16, border: "1px solid #fdba74",
+          fontSize: 13, display: "flex", alignItems: "center", gap: 8,
         }}>
           ⚠️ <strong>Invalid time range:</strong>&nbsp;{rangeError}&nbsp;
           Chart will not update until corrected.
         </div>
       )}
 
-      {/* Stats */}
-      <div className="stats-row">
-        <StatCard label="Current" value={latestValue ?? "–"} unit={unit} color={chartColor} />
-        <StatCard label="Average" value={avgValue}           unit={unit} color={chartColor} />
-        <StatCard label="Min"     value={minValue}           unit={unit} color={chartColor} />
-        <StatCard label="Max"     value={maxValue}           unit={unit} color={chartColor} />
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#475569" }}>
+            Metrics ({metricSlots.length}/{MAX_METRICS})
+          </span>
+          <button
+            onClick={addSlot}
+            disabled={metricSlots.length >= MAX_METRICS || !selectedEntity || loadingMetrics}
+            style={{
+              background: metricSlots.length >= MAX_METRICS ? "#f1f5f9" : "#2563eb",
+              color:      metricSlots.length >= MAX_METRICS ? "#94a3b8" : "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "6px 14px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: metricSlots.length >= MAX_METRICS ? "not-allowed" : "pointer",
+            }}
+          >
+            + Add Metric
+          </button>
+        </div>
+
+        {metricSlots.length === 0 && (
+          <div style={{ color: "#94a3b8", fontSize: 13, padding: "8px 0" }}>
+            {selectedEntity
+              ? 'Click "+ Add Metric" to start plotting data.'
+              : "Select an entity first."}
+          </div>
+        )}
+
+        {metricSlots.map((slot, idx) => (
+          <MetricRow
+            key={slot.id}
+            slot={slot}
+            index={idx}
+            metrics={metrics}
+            loadingMetrics={loadingMetrics}
+            onRemove={removeSlot}
+            onChangeMetric={changeSlotMetric}
+          />
+        ))}
+
+        {metricError && <DropdownError message={metricError} />}
       </div>
 
-      {/* Chart */}
-      <MetricLineChart
-        data={data}
-        loading={loadingData}
-        metricName={metricName}
-        unit={unit}
+      <div className="stats-row">
+        <StatCard
+          label="Data points"
+          value={allValues.length || "–"}
+          unit=""
+          color={statsColor}
+        />
+        <StatCard
+          label="Active metrics"
+          value={metricSlots.filter((s) => s.metric).length || "–"}
+          unit=""
+          color={statsColor}
+        />
+        <StatCard
+          label="Overall min"
+          value={allValues.length ? Math.min(...allValues).toFixed(2) : "–"}
+          unit=""
+          color={statsColor}
+        />
+        <StatCard
+          label="Overall max"
+          value={allValues.length ? Math.max(...allValues).toFixed(2) : "–"}
+          unit=""
+          color={statsColor}
+        />
+      </div>
+
+      <MultiMetricChart
+        slots={metricSlots}
+        slotDataMap={slotDataMap}
         fromTs={fromTs}
         toTs={toTs}
-        color={chartColor}
       />
     </div>
   );
