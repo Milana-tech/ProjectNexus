@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS algorithms (
 );
 
 -- Create anomaly_results table (separate from readings, traceable to algorithm)
+-- PLEASE NOTE: no FK from anomaly_results.timestamp to readings.timestamp because
+-- readings is a TimescaleDB hypertable (and hypertables cannot be FK targets)
+-- Timestamp is guaranteed by /anomalies/run, which sources timestamps directly from readings. 
+-- Orphan rows are possible only via direct DB writes or if readings are deleted after detection.
+
 CREATE TABLE IF NOT EXISTS anomaly_results (
     id BIGSERIAL PRIMARY KEY,
     metric_id BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,
