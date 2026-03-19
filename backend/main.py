@@ -97,12 +97,12 @@ async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPE
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
     first = exc.errors()[0] if exc.errors() else None
     if not first:
-        return JSONResponse(status_code=400, content=_error_schema("Validation error"))
+        return JSONResponse(status_code=422, content=_error_schema("Validation error"))
 
     loc = tuple(first.get("loc", ()))
     field, index = _extract_field_index_from_loc(loc)
     msg = first.get("msg") or "Validation error"
-    return JSONResponse(status_code=400, content=_error_schema(str(msg), field=field, index=index))
+    return JSONResponse(status_code=422, content=_error_schema(str(msg), field=field, index=index))
 
 
 # ---------------------------------------------------------------------------
@@ -413,11 +413,11 @@ def get_readings(
     try:
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'.", field=None))
@@ -472,11 +472,11 @@ def run_anomaly(
     try:
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
@@ -551,11 +551,11 @@ async def get_anomalies(
     try:
         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
