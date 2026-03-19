@@ -54,9 +54,10 @@ CREATE TABLE IF NOT EXISTS algorithms (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_algorithms_name_unique ON algorithms (name);
 
 -- Create anomaly_results table (separate from readings, traceable to algorithm)
--- FK (metric_id, timestamp) to readings (metric_id, timestamp) enforces that
--- every anomaly result must correspond to an existing reading row.
--- ON DELETE CASCADE ensures no orphaned anomaly results when a reading is deleted.
+-- PLEASE NOTE: no FK from anomaly_results.timestamp to readings.timestamp because
+-- readings is a TimescaleDB hypertable (and hypertables cannot be FK targets)
+-- Timestamp is guaranteed by /anomalies/run, which sources timestamps directly from readings.
+-- Orphan rows are possible only via direct DB writes or if readings are deleted after detection.
 CREATE TABLE IF NOT EXISTS anomaly_results (
     id            BIGSERIAL PRIMARY KEY,
     metric_id     BIGINT NOT NULL REFERENCES metrics(id) ON DELETE CASCADE,

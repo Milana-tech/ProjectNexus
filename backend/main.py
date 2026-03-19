@@ -37,6 +37,11 @@ app.add_middleware(
 )
 
 
+def _parse_iso(value: str) -> datetime:
+    """Parse an ISO 8601 datetime string, accepting both Z and +00:00 suffixes."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def get_conn() -> psycopg.Connection:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
@@ -411,11 +416,11 @@ def get_readings(
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid metric_id: '{metric_id}'. Expected a positive numeric id.", field="metric_id"))
 
     try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        start_dt = _parse_iso(start)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        end_dt = _parse_iso(end)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
@@ -470,11 +475,11 @@ def run_anomaly(
         raise HTTPException(status_code=400, detail=_error_schema(str(e), field="algorithm"))
 
     try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        start_dt = _parse_iso(start)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        end_dt = _parse_iso(end)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
@@ -549,11 +554,11 @@ async def get_anomalies(
     end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
     try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        start_dt = _parse_iso(start)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        end_dt = _parse_iso(end)
     except ValueError:
         raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
