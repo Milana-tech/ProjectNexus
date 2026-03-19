@@ -6,8 +6,11 @@ from typing import Optional, Any
 
 import psycopg
 from psycopg.rows import dict_row
-from fastapi import FastAPI, HTTPException, Query, Path
+from fastapi import FastAPI, HTTPException, Query, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, field_validator, model_validator
 from anomaly import ALGORITHMS, get_algorithm
 
@@ -37,8 +40,69 @@ app.add_middleware(
 def get_conn() -> psycopg.Connection:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        raise HTTPException(status_code=503, detail="DATABASE_URL is not set")
+        raise HTTPException(status_code=503, detail={"error": "DATABASE_URL is not set", "field": None, "index": None})
     return psycopg.connect(database_url, row_factory=dict_row)
+
+
+def _error_schema(message: str, field: str | None = None, index: int | None = None) -> dict:
+    return {"error": message, "field": field, "index": index}
+
+
+def _coerce_4xx_detail(detail: Any) -> dict:
+    if isinstance(detail, dict) and set(detail.keys()) == {"error", "field", "index"}:
+        return detail
+    if isinstance(detail, str):
+        return _error_schema(detail)
+    return _error_schema("Request failed")
+
+
+def _extract_field_index_from_loc(loc: tuple[Any, ...]) -> tuple[str | None, int | None]:
+    if not loc:
+        return None, None
+
+    parts = list(loc)
+    if parts and parts[0] in {"body", "query", "path", "header", "cookie"}:
+        parts = parts[1:]
+
+    index: int | None = None
+    for i in range(len(parts) - 1):
+        if isinstance(parts[i], str) and parts[i] in {"readings", "items"} and isinstance(parts[i + 1], int):
+            index = parts[i + 1]
+            break
+
+    field = parts[-1] if parts and isinstance(parts[-1], str) else None
+    return field, index
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict) and set(exc.detail.keys()) == {"error", "field", "index"}:
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+
+    if 400 <= exc.status_code <= 499:
+        detail = _coerce_4xx_detail(exc.detail)
+        return JSONResponse(status_code=exc.status_code, content=detail)
+
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if 400 <= exc.status_code <= 499:
+        return JSONResponse(status_code=exc.status_code, content=_error_schema(exc.detail))
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    first = exc.errors()[0] if exc.errors() else None
+    if not first:
+        return JSONResponse(status_code=400, content=_error_schema("Validation error"))
+
+    loc = tuple(first.get("loc", ()))
+    field, index = _extract_field_index_from_loc(loc)
+    msg = first.get("msg") or "Validation error"
+    return JSONResponse(status_code=400, content=_error_schema(str(msg), field=field, index=index))
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +118,7 @@ def health():
 def db_check():
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
-        return {"ok": False, "error": "DATABASE_URL is not set"}
+        raise HTTPException(status_code=503, detail=_error_schema("DATABASE_URL is not set", field=None))
     try:
         with psycopg.connect(database_url) as conn:
             with conn.cursor() as cur:
@@ -62,7 +126,7 @@ def db_check():
                 (now,) = cur.fetchone()
         return {"ok": True, "now": str(now)}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        raise HTTPException(status_code=500, detail=_error_schema(str(e), field=None))
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +170,7 @@ def get_entities():
         log.exception("Failed to load entities")
         raise HTTPException(status_code=500, detail="Failed to load entities") from e
 
+
 # ---------------------------------------------------------------------------
 # UI config
 # ---------------------------------------------------------------------------
@@ -122,6 +187,7 @@ def get_config():
         ],
         "default_range_index": 1,
     }
+
 
 # ---------------------------------------------------------------------------
 # Algorithms
@@ -144,7 +210,10 @@ def get_algorithms():
         log.exception("Failed to load algorithms")
         raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
 
+
+# ---------------------------------------------------------------------------
 # Metrics — list metrics for a zone/entity (used by frontend metric selector)
+# ---------------------------------------------------------------------------
 
 @app.get("/metrics")
 def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID")):
@@ -153,7 +222,7 @@ def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID"))
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM zones WHERE id = %s", (entity_id,))
             if cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail=f"Zone {entity_id} not found.")
+                raise HTTPException(status_code=404, detail=_error_schema(f"Zone {entity_id} not found.", field="entity_id"))
             cur.execute(
                 """
                 SELECT m.id, m.name, m.unit
@@ -167,7 +236,10 @@ def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID"))
             rows = cur.fetchall()
     return [{"id": row["id"], "name": row["name"], "unit": row["unit"] or ""} for row in rows]
 
+
+# ---------------------------------------------------------------------------
 # Models for bulk ingest
+# ---------------------------------------------------------------------------
 
 class Reading(BaseModel):
     metric_id: int
@@ -240,8 +312,8 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
             unknown = set(unique_ids) - set(metric_zone_map)
             if unknown:
                 raise HTTPException(
-                    status_code=422,
-                    detail=f"Unknown metric_id(s): {sorted(unknown)}.",
+                    status_code=400,
+                    detail=_error_schema(f"Unknown metric_id(s): {sorted(unknown)}.", field="metric_id"),
                 )
 
             now = datetime.now(timezone.utc)
@@ -279,7 +351,7 @@ def get_readings_by_zone(
     try:
         zid = int(zone_id)
     except Exception:
-        raise HTTPException(status_code=400, detail=f"Invalid zone id: {zone_id}.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid zone id: {zone_id}.", field="zone_id"))
 
     now_utc = datetime.now(timezone.utc)
     if start is None:
@@ -293,13 +365,13 @@ def get_readings_by_zone(
         end = end.replace(tzinfo=timezone.utc)
 
     if start > end:
-        raise HTTPException(status_code=400, detail="start must be before end")
+        raise HTTPException(status_code=400, detail=_error_schema("start must be before end", field=None))
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM zones WHERE id = %s", (zid,))
             if cur.fetchone() is None:
-                raise HTTPException(status_code=404, detail=f"Zone {zid} not found")
+                raise HTTPException(status_code=404, detail=_error_schema(f"Zone {zid} not found", field="zone_id"))
 
             cur.execute(
                 """
@@ -326,24 +398,24 @@ def get_readings_by_zone(
 
 @app.get("/readings")
 def get_readings(
-    metric_id: int = Query(..., gt=0),
-    start: Optional[datetime] = Query(None),
-    end: Optional[datetime] = Query(None),
-    limit: int = Query(500, ge=1, le=5000),
+    metric_id: str = Query(..., description="Metric ID (numeric)"),
+    start: str     = Query(None, description="Start datetime, ISO 8601"),
+    end: str       = Query(None, description="End datetime, ISO 8601"),
+    limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (metric_id,))
             metric = cur.fetchone()
             if not metric:
-                raise HTTPException(status_code=404, detail=f"metric_id {metric_id} not found.")
+                raise HTTPException(status_code=404, detail=_error_schema(f"metric_id {metric_id} not found.", field="metric_id"))
 
             if start and start.tzinfo is None:
                 start = start.replace(tzinfo=timezone.utc)
             if end and end.tzinfo is None:
                 end = end.replace(tzinfo=timezone.utc)
             if start and end and end < start:
-                raise HTTPException(status_code=422, detail="'end' must not be before 'start'.")
+                raise HTTPException(status_code=400, detail=_error_schema("'end' must not be before 'start'.", field=None))
 
             conditions = ["metric_id = %s"]
             params: list = [metric_id]
@@ -359,7 +431,7 @@ def get_readings(
                 "SELECT id, metric_id, timestamp, value, created_at "
                 "FROM readings "
                 f"WHERE {' AND '.join(conditions)} "
-                "ORDER BY timestamp DESC LIMIT %s",
+                "ORDER BY timestamp ASC LIMIT %s",
                 params,
             )
             rows = cur.fetchall()
@@ -385,47 +457,41 @@ def run_anomaly(
     start: str     = Query(..., description="Start datetime, ISO 8601"),
     end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
-    # Validate algorithm exists in registry
     try:
         fn = get_algorithm(algorithm)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_error_schema(str(e), field="algorithm"))
 
-    # Validate start/end as strings → return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = datetime.fromisoformat(end)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
-        raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+        raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
 
-    # Validate metric_id is numeric
     try:
         mid = int(metric_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a numeric id.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid metric_id: '{metric_id}'. Expected a numeric id.", field="metric_id"))
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # Check metric exists
                 cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
                 if cur.fetchone() is None:
-                    raise HTTPException(status_code=404, detail=f"metric_id '{mid}' not found.")
+                    raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
 
-                # Look up algorithm_id FK from algorithms table
                 cur.execute("SELECT id FROM algorithms WHERE name = %s", (algorithm,))
                 algo_row = cur.fetchone()
                 if algo_row is None:
-                    raise HTTPException(status_code=400, detail=f"Algorithm '{algorithm}' not registered in algorithms table.")
+                    raise HTTPException(status_code=400, detail=_error_schema(f"Algorithm '{algorithm}' not registered in algorithms table.", field="algorithm"))
                 algorithm_id = algo_row["id"]
 
-                # Fetch readings from correct table
                 cur.execute("""
                     SELECT timestamp, value
                     FROM readings
@@ -443,14 +509,13 @@ def run_anomaly(
     if not rows:
         raise HTTPException(
             status_code=404,
-            detail=f"No readings found for metric_id '{mid}' in the given time range."
+            detail=_error_schema(f"No readings found for metric_id '{mid}' in the given time range.", field="metric_id")
         )
 
     timestamps = [r["timestamp"] for r in rows]
     values     = [r["value"] for r in rows]
     results    = fn(values)
 
-    # Store results and clear old ones first to avoid duplicates
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -465,6 +530,8 @@ def run_anomaly(
                         VALUES (%s, %s, %s, %s, %s)
                     """, (mid, algorithm_id, timestamps[i], r["score"], r["flag"]))
             conn.commit()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
 
@@ -472,33 +539,31 @@ def run_anomaly(
 
 
 @app.get("/anomalies")
-def get_anomalies(
-    metric_id: str = Query(..., description="Metric ID (numeric)"),
-    start: str     = Query(..., description="Start datetime, ISO 8601"),
-    end: str       = Query(..., description="End datetime, ISO 8601"),
-):
-    # Validate start/end as strings so return 400 not 422
+async def get_anomalies(metric_id: str, start: str, end: str):
     try:
-        start_dt = datetime.fromisoformat(start)
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid start: '{start}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end)
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid end: '{end}'. Use ISO 8601 format.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
-        raise HTTPException(status_code=400, detail="'start' must be before 'end'")
+        raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
 
-    # Validate metric_id is numeric
     try:
         mid = int(metric_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid metric_id: '{metric_id}'. Expected a numeric id.")
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid metric_id: '{metric_id}'. Expected a numeric id.", field="metric_id"))
 
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
+
                 cur.execute("""
                     SELECT timestamp, anomaly_score, anomaly_flag
                     FROM anomaly_results
@@ -507,6 +572,9 @@ def get_anomalies(
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
