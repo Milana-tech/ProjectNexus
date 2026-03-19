@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional, List
 
 
 class MeasurementRepository:
@@ -56,3 +56,40 @@ class MeasurementRepository:
                 (zone_id, start_time, end_time),
             )
             return cur.fetchall()
+
+    def get_readings_with_anomalies(
+        self, 
+        metric_id: int, 
+        start_dt: Optional[datetime] = None, 
+        end_dt: Optional[datetime] = None, 
+        limit: int = 500
+    ) -> List[dict[str, Any]]:
+        conditions = ["r.metric_id = %s"]
+        params: list = [metric_id]
+        
+        if start_dt:
+            conditions.append("r.timestamp >= %s")
+            params.append(start_dt)
+        if end_dt:
+            conditions.append("r.timestamp <= %s")
+            params.append(end_dt)
+        params.append(limit)
+        
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT r.id, r.metric_id, r.timestamp, r.value, r.created_at, 
+                       EXISTS(SELECT 1 FROM anomaly_results ar 
+                              WHERE ar.metric_id = r.metric_id AND ar.timestamp = r.timestamp AND ar.anomaly_flag = true) as is_anomaly
+                FROM readings r
+                WHERE {' AND '.join(conditions)}
+                ORDER BY r.timestamp DESC LIMIT %s
+                """,
+                params,
+            )
+            return cur.fetchall()
+
+    def get_metric_by_id(self, metric_id: int) -> Optional[dict[str, Any]]:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (metric_id,))
+            return cur.fetchone()

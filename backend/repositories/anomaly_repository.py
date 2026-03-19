@@ -65,6 +65,11 @@ class AnomalyRepository:
                     ),
                 )
 
+    def get_metric_by_id(self, metric_id: int) -> dict[str, Any] | None:
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (metric_id,))
+            return cur.fetchone()
+
     def list_anomalies_by_metric_and_range(
         self,
         metric_id: int,
