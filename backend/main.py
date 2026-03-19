@@ -338,7 +338,7 @@ def get_readings_by_zone(
 
     with get_conn() as conn:
         measurement_repo = MeasurementRepository(conn)
-        rows = measurement_repo.get_readings_by_zone(zid, start, end)
+        rows = measurement_repo.list_by_zone_and_range(zid, start, end)
 
     return [
         {"timestamp": row["timestamp"].isoformat(), "metric": row["metric"], "value": row["value"]}
@@ -395,7 +395,7 @@ def get_readings(
         "metric": {"id": metric["id"], "name": metric["name"], "unit": metric["unit"]},
         "count": len(rows),
         "readings": [
-            {"id": r["id"], "timestamp": r["timestamp"].isoformat(), "value": r["value"], "is_anomaly": r["is_anomaly"]}
+            {"id": r["id"], "timestamp": r["timestamp"].isoformat(), "value": r["value"], "is_anomaly": r.get("is_anomaly", False)}
             for r in rows
         ],
     }
@@ -444,13 +444,13 @@ def get_anomalies(
         if not metric:
             raise HTTPException(status_code=404, detail=f"metric_id {metric_id} not found.")
 
-        rows = anomaly_repo.get_anomalies(metric_id, start_dt, end_dt, limit)
+        rows = anomaly_repo.list_anomalies_by_metric_and_range(metric_id, start_dt, end_dt)
 
     return {
         "metric": {"id": metric["id"], "name": metric["name"], "unit": metric["unit"]},
         "count": len(rows),
         "anomalies": [
-            {"timestamp": row["timestamp"].isoformat(), "anomaly_score": row["anomaly_score"], "anomaly_flag": row["anomaly_flag"], "metadata": row["metadata"]}
+            {"timestamp": row["timestamp"].isoformat(), "anomaly_score": row["anomaly_score"], "anomaly_flag": row["anomaly_flag"], "metadata": None}
             for row in rows
         ],
     }
