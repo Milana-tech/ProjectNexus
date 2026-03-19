@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator, model_validator
-from anomaly import get_algorithm
+from anomaly import ALGORITHMS, get_algorithm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -122,6 +122,27 @@ def get_config():
         ],
         "default_range_index": 1,
     }
+
+# ---------------------------------------------------------------------------
+# Algorithms
+# ---------------------------------------------------------------------------
+
+@app.get("/algorithms")
+def get_algorithms():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM algorithms ORDER BY name;")
+                rows = cur.fetchall()
+
+        runtime_supported = set(ALGORITHMS.keys())
+        available = [row["name"] for row in rows if row["name"] in runtime_supported]
+        return [{"name": name, "label": name.title()} for name in available]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load algorithms")
+        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
 
 # Metrics — list metrics for a zone/entity (used by frontend metric selector)
 
@@ -491,7 +512,7 @@ def get_anomalies(
 
     return [
         {
-            "timestamp": str(r["timestamp"]),
+            "timestamp": r["timestamp"].isoformat(),
             "score": r["anomaly_score"],
             "flag": r["anomaly_flag"],
         }
