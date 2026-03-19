@@ -50,6 +50,9 @@ CREATE TABLE IF NOT EXISTS algorithms (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Ensure algorithm names are unique so seeding is idempotent across restarts
+CREATE UNIQUE INDEX IF NOT EXISTS idx_algorithms_name_unique ON algorithms (name);
+
 -- Create anomaly_results table (separate from readings, traceable to algorithm)
 -- FK (metric_id, timestamp) to readings (metric_id, timestamp) enforces that
 -- every anomaly result must correspond to an existing reading row.
@@ -118,7 +121,7 @@ SELECT create_hypertable('readings', 'timestamp', if_not_exists => TRUE);
 
 INSERT INTO algorithms (name, type, version)
 VALUES ('zscore', 'anomaly_detection', '1.0')
-ON CONFLICT DO NOTHING;
+ON CONFLICT (name) DO NOTHING;
 
 INSERT INTO zones (name, description) VALUES
     ('Zone A', 'Environmental zone A'),
