@@ -102,12 +102,12 @@ async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPE
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
     first = exc.errors()[0] if exc.errors() else None
     if not first:
-        return JSONResponse(status_code=400, content=_error_schema("Validation error"))
+        return JSONResponse(status_code=422, content=_error_schema("Validation error"))
 
     loc = tuple(first.get("loc", ()))
     field, index = _extract_field_index_from_loc(loc)
     msg = first.get("msg") or "Validation error"
-    return JSONResponse(status_code=400, content=_error_schema(str(msg), field=field, index=index))
+    return JSONResponse(status_code=422, content=_error_schema(str(msg), field=field, index=index))
 
 
 # ---------------------------------------------------------------------------
@@ -404,8 +404,8 @@ def get_readings_by_zone(
 @app.get("/readings")
 def get_readings(
     metric_id: str = Query(..., description="Metric ID (numeric)"),
-    start: str     = Query(None, description="Start datetime, ISO 8601"),
-    end: str       = Query(None, description="End datetime, ISO 8601"),
+    start: str     = Query(..., description="Start datetime, ISO 8601"),
+    end: str       = Query(..., description="End datetime, ISO 8601"),
     limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
     try:
@@ -415,20 +415,16 @@ def get_readings(
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid metric_id: '{metric_id}'. Expected a positive numeric id.", field="metric_id"))
 
-    start_dt = None
-    end_dt   = None
-    if start:
-        try:
-            start_dt = _parse_iso(start)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
-    if end:
-        try:
-            end_dt = _parse_iso(end)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+    try:
+        start_dt = _parse_iso(start)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+    try:
+        end_dt = _parse_iso(end)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
-    if start_dt and end_dt and start_dt >= end_dt:
+    if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'.", field=None))
 
     try:
@@ -439,22 +435,12 @@ def get_readings(
                 if not metric:
                     raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
 
-                conditions = ["metric_id = %s"]
-                params: list = [mid]
-                if start_dt:
-                    conditions.append("timestamp >= %s")
-                    params.append(start_dt)
-                if end_dt:
-                    conditions.append("timestamp <= %s")
-                    params.append(end_dt)
-                params.append(limit)
-
                 cur.execute(
                     "SELECT id, metric_id, timestamp, value, created_at "
                     "FROM readings "
-                    f"WHERE {' AND '.join(conditions)} "
+                    "WHERE metric_id = %s AND timestamp >= %s AND timestamp <= %s "
                     "ORDER BY timestamp ASC LIMIT %s",
-                    params,
+                    (mid, start_dt, end_dt, limit),
                 )
                 rows = cur.fetchall()
     except HTTPException:
@@ -491,11 +477,11 @@ def run_anomaly(
     try:
         start_dt = _parse_iso(start)
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = _parse_iso(end)
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
@@ -562,15 +548,19 @@ def run_anomaly(
 
 
 @app.get("/anomalies")
-async def get_anomalies(metric_id: str, start: str, end: str):
+async def get_anomalies(
+    metric_id: str = Query(..., description="Metric ID (numeric)"),
+    start: str     = Query(..., description="Start datetime, ISO 8601"),
+    end: str       = Query(..., description="End datetime, ISO 8601"),
+):
     try:
         start_dt = _parse_iso(start)
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
         end_dt = _parse_iso(end)
     except ValueError:
-        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
+        raise HTTPException(status_code=422, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
