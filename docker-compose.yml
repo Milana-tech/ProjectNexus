@@ -16,6 +16,34 @@ services:
     volumes:
       - timescaledb_data:/var/lib/postgresql/data
       - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost -p 5432"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: timescale/timescaledb:latest-pg16
+    container_name: project-nexus-migrate
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/db/init.sql:/migrations/init.sql:ro
+    command:
+      - bash
+      - -lc
+      - |
+        echo "Waiting for DB...";
+        until pg_isready -h db -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -p 5432; do sleep 2; done;
+        echo "Running migrations/seeds (idempotent)...";
+        psql -h db -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -f /migrations/init.sql;
+        echo "Done.";
 
   backend:
     build:
@@ -27,9 +55,15 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
     depends_on:
-      - db
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5).read(); print('ok')"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
 
   backend_php:
     build:
@@ -42,10 +76,22 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       APP_ENV: ${APP_ENV:-dev}
       APP_DEBUG: ${APP_DEBUG:-1}
+    command:
+      - sh
+      - -lc
+      - |
+        printf "APP_ENV=%s\nAPP_DEBUG=%s\n" "$APP_ENV" "$APP_DEBUG" > /app/.env
+        exec php -S 0.0.0.0:8000 -t public public/index.php
     depends_on:
-      - db
+      migrate:
+        condition: service_completed_successfully
     ports:
-      - "8001:8000"
+      - "${PHP_BACKEND_PORT:-8001}:8000"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit((int) (file_get_contents('http://localhost:8000/health') === false));"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
 
   frontend:
     build:
@@ -57,12 +103,19 @@ services:
       - .env
     environment:
       - VITE_API_URL=${VITE_API_URL}
+      - REACT_APP_API_URL=${VITE_API_URL}
       - HOST=0.0.0.0
       - PORT=3000
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', r => process.exit(r.statusCode>=200 && r.statusCode<500 ? 0 : 1)).on('error', () => process.exit(1));"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
 
   simulator:
     build:
@@ -80,7 +133,13 @@ services:
       SIM_INTERVAL_SECONDS: ${SIM_INTERVAL_SECONDS:-5}
       SIM_SPIKE_EVERY: ${SIM_SPIKE_EVERY:-20}
     depends_on:
-      - db
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://backend:8000/health', timeout=5); r.raise_for_status(); print('ok')"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
 
 volumes:
   timescaledb_data:
