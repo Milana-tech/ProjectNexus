@@ -89,7 +89,7 @@ final class IngestController
         try {
             $pdo = new \PDO($dsn, $user, $pass, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
         } catch (\Throwable $e) {
-            return new JsonResponse(['error' => 'DB connection failed', 'detail' => $e->getMessage()], 500);
+            return new JsonResponse(['error' => 'DB connection failed'], 500);
         }
 
         // Pre-flight: ensure zones and metrics exist
@@ -100,17 +100,39 @@ final class IngestController
         $placeholdersMetric = implode(',', array_fill(0, count($metricIds), '?')) ?: 'NULL';
 
         $existingZones = [];
-        if (count($zoneIds) > 0) {
-            $stmt = $pdo->prepare("SELECT id FROM zones WHERE id IN ({$placeholdersZone})");
-            $stmt->execute($zoneIds);
-            $existingZones = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
-        }
-
         $existingMetrics = [];
-        if (count($metricIds) > 0) {
-            $stmt = $pdo->prepare("SELECT id FROM metrics WHERE id IN ({$placeholdersMetric})");
-            $stmt->execute($metricIds);
-            $existingMetrics = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+
+        // Optimized pre-flight: fetch existing ids with a single query when possible
+        try {
+            if (count($zoneIds) > 0 && count($metricIds) > 0) {
+                // Build placeholders for both sets
+                $placeholdersBoth = implode(',', array_fill(0, count($zoneIds) + count($metricIds), '?'));
+                // We'll select id and type so we can separate results
+                $sql = "SELECT id, 'zone' AS kind FROM zones WHERE id IN (" . implode(',', array_fill(0, count($zoneIds), '?')) . ")"
+                     . " UNION ALL "
+                     . "SELECT id, 'metric' AS kind FROM metrics WHERE id IN (" . implode(',', array_fill(0, count($metricIds), '?')) . ")";
+
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute(array_merge($zoneIds, $metricIds));
+                $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+                foreach ($rows as $r) {
+                    if (($r['kind'] ?? '') === 'zone') {
+                        $existingZones[] = $r['id'];
+                    } else {
+                        $existingMetrics[] = $r['id'];
+                    }
+                }
+            } elseif (count($zoneIds) > 0) {
+                $stmt = $pdo->prepare("SELECT id FROM zones WHERE id IN (" . implode(',', array_fill(0, count($zoneIds), '?')) . ")");
+                $stmt->execute($zoneIds);
+                $existingZones = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+            } elseif (count($metricIds) > 0) {
+                $stmt = $pdo->prepare("SELECT id FROM metrics WHERE id IN (" . implode(',', array_fill(0, count($metricIds), '?')) . ")");
+                $stmt->execute($metricIds);
+                $existingMetrics = $stmt->fetchAll(\PDO::FETCH_COLUMN, 0);
+            }
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => 'DB validation query failed'], 500);
         }
 
         $missingZones = array_values(array_diff($zoneIds, array_map('intval', $existingZones)));
@@ -148,7 +170,7 @@ final class IngestController
             return new JsonResponse(['inserted' => count($validated)], 201);
         } catch (\Throwable $e) {
             try { $pdo->rollBack(); } catch (\Throwable $ignore) {}
-            return new JsonResponse(['error' => 'DB insert failed', 'detail' => $e->getMessage()], 500);
+            return new JsonResponse(['error' => 'DB insert failed'], 500);
         }
     }
 }
