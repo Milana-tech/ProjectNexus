@@ -86,7 +86,7 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - "8001:8000"
+      - "${PHP_BACKEND_PORT:-8001}:8000"
     healthcheck:
       test: ["CMD", "php", "-r", "exit((int) (file_get_contents('http://localhost:8000/health') === false));"]
       interval: 5s
