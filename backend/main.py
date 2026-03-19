@@ -14,7 +14,7 @@ from anomaly import get_algorithm
 from repositories import MeasurementRepository, AnomalyRepository
 
 # Response Models for OpenAPI Documentation
-class Reading(BaseModel):
+class ReadingResponse(BaseModel):
     id: int
     timestamp: str
     value: float
@@ -28,7 +28,7 @@ class Metric(BaseModel):
 class ReadingsResponse(BaseModel):
     metric: Metric
     count: int
-    readings: list[Reading]
+    readings: list[ReadingResponse]
 
 class AnomalyResult(BaseModel):
     timestamp: str
