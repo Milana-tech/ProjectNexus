@@ -9,10 +9,10 @@ from psycopg.rows import dict_row
 from fastapi import FastAPI, HTTPException, Query, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, field_validator, model_validator
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from anomaly import get_algorithm
+from pydantic import BaseModel, field_validator, model_validator
+from anomaly import ALGORITHMS, get_algorithm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -151,37 +151,6 @@ def get_zones():
         log.exception("Failed to load zones")
         raise HTTPException(status_code=500, detail="Failed to load zones") from e
 
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-
-@app.get("/metrics")
-def get_metrics():
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT m.id, m.name, m.unit, z.name AS zone_name
-                    FROM metrics m
-                    JOIN devices d ON d.id = m.device_id
-                    JOIN zones z ON z.id = d.zone_id
-                    ORDER BY z.name, m.name;
-                """)
-                rows = cur.fetchall()
-        return [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "unit": row["unit"],
-                "zone": row["zone_name"],
-            }
-            for row in rows
-        ]
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Failed to load metrics")
-        raise HTTPException(status_code=500, detail="Failed to load metrics") from e
 
 # ---------------------------------------------------------------------------
 # Entities  (domain-agnostic alias for /zones — used by the frontend dropdown)
@@ -201,6 +170,7 @@ def get_entities():
         log.exception("Failed to load entities")
         raise HTTPException(status_code=500, detail="Failed to load entities") from e
 
+
 # ---------------------------------------------------------------------------
 # UI config
 # ---------------------------------------------------------------------------
@@ -218,7 +188,32 @@ def get_config():
         "default_range_index": 1,
     }
 
+
+# ---------------------------------------------------------------------------
+# Algorithms
+# ---------------------------------------------------------------------------
+
+@app.get("/algorithms")
+def get_algorithms():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM algorithms ORDER BY name;")
+                rows = cur.fetchall()
+
+        runtime_supported = set(ALGORITHMS.keys())
+        available = [row["name"] for row in rows if row["name"] in runtime_supported]
+        return [{"name": name, "label": name.title()} for name in available]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load algorithms")
+        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
+
+
+# ---------------------------------------------------------------------------
 # Metrics — list metrics for a zone/entity (used by frontend metric selector)
+# ---------------------------------------------------------------------------
 
 @app.get("/metrics")
 def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID")):
@@ -241,7 +236,10 @@ def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID"))
             rows = cur.fetchall()
     return [{"id": row["id"], "name": row["name"], "unit": row["unit"] or ""} for row in rows]
 
+
+# ---------------------------------------------------------------------------
 # Models for bulk ingest
+# ---------------------------------------------------------------------------
 
 class Reading(BaseModel):
     metric_id: int
@@ -459,13 +457,11 @@ def run_anomaly(
     start: str     = Query(..., description="Start datetime, ISO 8601"),
     end: str       = Query(..., description="End datetime, ISO 8601"),
 ):
-    # Validate algorithm exists in registry
     try:
         fn = get_algorithm(algorithm)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=_error_schema(str(e), field="algorithm"))
 
-    # Validate start/end as strings → return 400 not 422
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -478,7 +474,6 @@ def run_anomaly(
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
 
-    # Validate metric_id is numeric
     try:
         mid = int(metric_id)
     except ValueError:
@@ -487,19 +482,16 @@ def run_anomaly(
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
-                # Check metric exists
                 cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
                 if cur.fetchone() is None:
                     raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
 
-                # Look up algorithm_id FK from algorithms table
                 cur.execute("SELECT id FROM algorithms WHERE name = %s", (algorithm,))
                 algo_row = cur.fetchone()
                 if algo_row is None:
                     raise HTTPException(status_code=400, detail=_error_schema(f"Algorithm '{algorithm}' not registered in algorithms table.", field="algorithm"))
                 algorithm_id = algo_row["id"]
 
-                # Fetch readings from correct table
                 cur.execute("""
                     SELECT timestamp, value
                     FROM readings
@@ -524,7 +516,6 @@ def run_anomaly(
     values     = [r["value"] for r in rows]
     results    = fn(values)
 
-    # Store results and clear old ones first to avoid duplicates
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
@@ -540,7 +531,7 @@ def run_anomaly(
                     """, (mid, algorithm_id, timestamps[i], r["score"], r["flag"]))
             conn.commit()
     except HTTPException:
-            raise
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
 
@@ -595,6 +586,7 @@ async def get_anomalies(metric_id: str, start: str, end: str):
         }
         for r in rows
     ]
+
 
 # ---------------------------------------------------------------------------
 # Entry point (for local dev without Docker)
