@@ -159,6 +159,11 @@ function toSecondKey(ts) {
   return Number.isFinite(ts) ? Math.floor(ts / 1000) : null;
 }
 
+function parseApiScore(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
 function toRunErrorMessage(detail) {
   if (typeof detail === "string" && detail.trim()) return detail.trim();
   return "Failed to run anomaly detection. Please try again.";
@@ -166,10 +171,20 @@ function toRunErrorMessage(detail) {
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload, label, unit }) {
+export function CustomTooltip({ active, payload, label, unit }) {
   if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload;
+  const isAnomaly = !!point?.isAnomaly;
+  const anomalyScore = point?.anomalyScore;
+  const hasValidTimestamp = Number.isFinite(new Date(label).getTime());
+  const primaryValue = payload[0]?.value;
+  const hasValue = primaryValue !== null && primaryValue !== undefined;
+  const hasScore = Number.isFinite(anomalyScore);
+  const showAnomalyDetails = isAnomaly && hasValidTimestamp && hasValue && hasScore;
   return (
-    <div style={{
+    <div
+      data-testid="metric-tooltip"
+      style={{
       background: "rgba(255,255,255,0.97)",
       border: "1px solid #e2e8f0",
       borderRadius: 10,
@@ -177,9 +192,11 @@ function CustomTooltip({ active, payload, label, unit }) {
       fontSize: 13,
       color: "#1e293b",
       boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-    }}>
+      position: "relative",
+    }}
+    >
       <div style={{ marginBottom: 6, color: "#94a3b8", fontSize: 11, fontFamily: "Space Mono, monospace" }}>
-        {new Date(label).toLocaleString()}
+        {hasValidTimestamp ? new Date(label).toLocaleString() : "Unknown time"}
       </div>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
@@ -189,6 +206,35 @@ function CustomTooltip({ active, payload, label, unit }) {
           </strong>
         </div>
       ))}
+      {showAnomalyDetails && (
+        <div
+          data-testid="anomaly-tooltip-details"
+          style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px solid #e2e8f0",
+            borderRadius: 8,
+            background: "rgba(254, 226, 226, 0.55)",
+            padding: "8px 10px",
+          }}
+        >
+          <div style={{ color: "#991b1b", fontWeight: 700, marginBottom: 6 }}>Anomaly Event</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Timestamp</span>
+            <strong style={{ color: "#7f1d1d" }}>{new Date(label).toLocaleString()}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Value</span>
+            <strong style={{ color: "#7f1d1d" }}>
+              {primaryValue}{unit ? ` ${unit}` : ""}
+            </strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Score</span>
+            <strong style={{ color: "#7f1d1d" }}>{anomalyScore}</strong>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -325,8 +371,10 @@ export default function Dashboard() {
   const [algorithmError,     setAlgorithmError]    = useState(null);
   const [runLoading,         setRunLoading]        = useState(false);
   const [runError,           setRunError]          = useState(null);
+  const [showAnomalies,      setShowAnomalies]     = useState(false);
+  const [anomalyLoading,     setAnomalyLoading]    = useState(false);
   const [anomalies,          setAnomalies]         = useState([]);
-  const [,                   setAnomaliesError]    = useState(null);
+  const [anomalyError,       setAnomalyError]      = useState(null);
 
   const [lastUpdated,     setLastUpdated]     = useState(null);
 
@@ -445,7 +493,8 @@ export default function Dashboard() {
       return;
     }
 
-    setAnomaliesError(null);
+    setAnomalyLoading(true);
+    setAnomalyError(null);
     try {
       const qs = new URLSearchParams({
         metric_id: String(metricId),
@@ -460,19 +509,28 @@ export default function Dashboard() {
       const rows = Array.isArray(json) ? json : [];
       const next = rows
         .filter((a) => !!a?.flag)
-        .map((a) => parseApiTimestamp(a.timestamp))
-        .filter((ts) => ts !== null);
+        .map((a) => {
+          const ts = parseApiTimestamp(a.timestamp);
+          const score = parseApiScore(a.score);
+          if (ts === null) return null;
+          return { ts, score };
+        })
+        .filter((entry) => entry !== null);
 
       setAnomalies(next);
     } catch (err) {
-      setAnomaliesError(err.message ?? "Failed to fetch anomalies.");
+      setAnomalyError(err.message ?? "Failed to fetch anomalies.");
       setAnomalies([]);
+    } finally {
+      setAnomalyLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (!selectedMetric?.id || !fromTs || !toTs || rangeError) {
+    if (!showAnomalies || !selectedMetric?.id || !fromTs || !toTs || rangeError) {
       setAnomalies([]);
+      setAnomalyError(null);
+      setAnomalyLoading(false);
       return;
     }
 
@@ -481,7 +539,7 @@ export default function Dashboard() {
       startTs: fromTs,
       endTs: toTs,
     });
-  }, [selectedMetric?.id, fromTs, toTs, rangeError, loadAnomalies]);
+  }, [showAnomalies, selectedMetric?.id, fromTs, toTs, rangeError, loadAnomalies]);
 
   async function handleRunDetection() {
     if (!selectedMetric?.id || !selectedAlgorithm || !fromTs || !toTs || rangeError || runLoading) return;
@@ -512,7 +570,11 @@ export default function Dashboard() {
         }
         throw new Error(toRunErrorMessage(detail));
       }
-      await loadAnomalies({ metricId, startTs, endTs });
+      if (showAnomalies) {
+        await loadAnomalies({ metricId, startTs, endTs });
+      } else {
+        setAnomalies([]);
+      }
       setRunError(null);
     } catch (err) {
       const msg = typeof err?.message === "string" && err.message.trim()
@@ -545,12 +607,21 @@ export default function Dashboard() {
     runLoading;
   const chartData = useMemo(() => {
     if (!data.length) return [];
-    const anomalyKeys = new Set(anomalies.map((ts) => toSecondKey(ts)).filter((k) => k !== null));
+    if (!showAnomalies || !anomalies.length) return data;
+    const anomalyMap = new Map(
+      anomalies
+        .map((entry) => {
+          const key = toSecondKey(entry.ts);
+          return key === null ? null : [key, entry.score];
+        })
+        .filter((entry) => entry !== null)
+    );
     return data.map((point) => ({
       ...point,
-      isAnomaly: anomalyKeys.has(toSecondKey(point.time)),
+      isAnomaly: anomalyMap.has(toSecondKey(point.time)),
+      anomalyScore: anomalyMap.get(toSecondKey(point.time)) ?? null,
     }));
-  }, [data, anomalies]);
+  }, [data, anomalies, showAnomalies]);
 
   return (
     <div className="dash">
@@ -717,6 +788,29 @@ export default function Dashboard() {
         <div className="divider" />
 
         <div className="control-group">
+          <label>&nbsp;</label>
+          <button
+            type="button"
+            aria-pressed={showAnomalies}
+            onClick={() => setShowAnomalies((v) => !v)}
+            style={{
+              background: showAnomalies ? "#dc2626" : "#e2e8f0",
+              border: "1px solid",
+              borderColor: showAnomalies ? "#dc2626" : "#cbd5e1",
+              borderRadius: 7,
+              color: showAnomalies ? "#ffffff" : "#334155",
+              fontFamily: "Space Mono, monospace",
+              fontSize: 12,
+              padding: "8px 12px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Show Anomalies: {showAnomalies ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        <div className="control-group">
           <label htmlFor="from-date">From</label>
           <input
             id="from-date"
@@ -788,6 +882,34 @@ export default function Dashboard() {
         }}>
           ⚠️ <strong>Invalid time range:</strong>&nbsp;{rangeError}&nbsp;
           Chart will not update until corrected.
+        </div>
+      )}
+
+      {showAnomalies && anomalyLoading && (
+        <div style={{
+          background: "#eff6ff",
+          color: "#1d4ed8",
+          padding: "10px 18px",
+          borderRadius: 8,
+          marginBottom: 16,
+          border: "1px solid #bfdbfe",
+          fontSize: 13,
+        }}>
+          Loading anomaly markers...
+        </div>
+      )}
+
+      {showAnomalies && anomalyError && (
+        <div style={{
+          background: "#fee2e2",
+          color: "#b91c1c",
+          padding: "10px 18px",
+          borderRadius: 8,
+          marginBottom: 16,
+          border: "1px solid #fca5a5",
+          fontSize: 13,
+        }}>
+          <strong>Anomaly fetch failed:</strong> {anomalyError}
         </div>
       )}
 
