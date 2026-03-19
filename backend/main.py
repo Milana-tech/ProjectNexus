@@ -369,10 +369,10 @@ def get_readings_by_zone(
 
 @app.get("/readings")
 def get_readings(
-    metric_id: int = Query(..., gt=0),
-    start: Optional[datetime] = Query(None),
-    end: Optional[datetime] = Query(None),
-    limit: int = Query(500, ge=1, le=5000),
+    metric_id: str = Query(..., description="Metric ID (numeric)"),
+    start: str     = Query(None, description="Start datetime, ISO 8601"),
+    end: str       = Query(None, description="End datetime, ISO 8601"),
+    limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -515,12 +515,7 @@ def run_anomaly(
 
 
 @app.get("/anomalies")
-def get_anomalies(
-    metric_id: str = Query(..., description="Metric ID (numeric)"),
-    start: str     = Query(..., description="Start datetime, ISO 8601"),
-    end: str       = Query(..., description="End datetime, ISO 8601"),
-):
-    # Validate start/end as strings so return 400 not 422
+async def get_anomalies(metric_id: str, start: str, end: str):
     try:
         start_dt = datetime.fromisoformat(start)
     except ValueError:
@@ -533,7 +528,6 @@ def get_anomalies(
     if start_dt >= end_dt:
         raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'", field=None))
 
-    # Validate metric_id is numeric
     try:
         mid = int(metric_id)
     except ValueError:
@@ -554,6 +548,8 @@ def get_anomalies(
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
@@ -566,8 +562,7 @@ def get_anomalies(
         for r in rows
     ]
 
-
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------x----------------------
 # Entry point (for local dev without Docker)
 # ---------------------------------------------------------------------------
 
