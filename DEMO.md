@@ -7,10 +7,17 @@ This script walks through the proof-of-concept from a cold start to live data in
 ## Step 1 — Start the full stack (30 seconds)
 
 ```bash
+# Option A (recommended): one-command demo start
+./run.sh
+
+# Option B (PowerShell)
+./run.ps1
+
+# Option C (manual)
 docker compose up --build
 ```
 
-Expected output: 4 services start — `db`, `backend`, `frontend`, `simulator`.
+Expected output: services start — `db`, `migrate`, `backend`, `backend_php`, `frontend`, `simulator`.
 
 **What to point out:**
 - Single command starts everything: TimescaleDB, FastAPI, React dashboard, and the data simulator.
@@ -30,12 +37,16 @@ curl http://localhost:8000/health
 # Database connectivity via API
 curl http://localhost:8000/db
 # Expected: {"ok":true,"now":"<current timestamp>"}
+
+# PHP backend health (Symfony)
+curl http://localhost:8001/health
+# Expected: {"status":"ok"}
 ```
 
 Or open the frontend in a browser:
 
 ```
-http://localhost:5173
+http://localhost:3000
 ```
 
 ---
@@ -105,7 +116,61 @@ docker exec project-nexus-db psql -U nexus -d nexus -c \
 
 ---
 
-## Step 7 — Show the modular algorithm registry (~15 seconds)
+## Step 7 — Run anomaly detection (API call) (~30 seconds)
+
+1) Pick a metric from the UI:
+
+- Open `http://localhost:3000`
+- Select an **Entity** and a **Metric**
+- Note the metric id from the URL or use the API below
+
+2) Get a metric id via API:
+
+```bash
+# Get entities (zones)
+curl http://localhost:8000/entities
+
+# Pick the first entity id, then list its metrics
+curl "http://localhost:8000/metrics?entity_id=1"
+```
+
+3) Run anomalies for the last hour:
+
+```bash
+# Replace METRIC_ID with the id from /metrics
+# Replace START_ISO / END_ISO with ISO-8601 timestamps (UTC recommended), e.g.
+#   START_ISO=2026-03-17T01:00:00+00:00
+#   END_ISO=2026-03-17T02:00:00+00:00
+curl -X POST "http://localhost:8000/anomalies/run?metric_id=METRIC_ID&algorithm=zscore&start=START_ISO&end=END_ISO"
+```
+
+PowerShell helper to generate times (optional):
+
+```powershell
+$end = (Get-Date).ToUniversalTime().ToString("o")
+$start = (Get-Date).ToUniversalTime().AddHours(-1).ToString("o")
+curl -Method POST "http://localhost:8000/anomalies/run?metric_id=METRIC_ID&algorithm=zscore&start=$start&end=$end"
+```
+
+---
+
+## Step 8 — Retrieve anomaly results (API call) (~15 seconds)
+
+```bash
+curl "http://localhost:8000/anomalies?metric_id=METRIC_ID&start=START_ISO&end=END_ISO"
+```
+
+PowerShell (optional):
+
+```powershell
+curl "http://localhost:8000/anomalies?metric_id=METRIC_ID&start=$start&end=$end"
+```
+
+Expected: a JSON array with `timestamp`, `score`, and `flag`.
+
+---
+
+## Step 9 — Show the modular algorithm registry (~15 seconds)
 
 ```bash
 docker exec project-nexus-db psql -U nexus -d nexus -c \

@@ -18,31 +18,25 @@ final class ReadingsController
     {
         $path = $request->getPathInfo();
 
-        $entityRaw = $request->query->get('entity_id');
-        if (!is_numeric($entityRaw) || (int) $entityRaw <= 0) {
-            return ApiResponse::error(400, 'entity_id must be a positive integer.', $path);
+        $metricIdRaw = $request->query->get('metric_id');
+        if (!is_numeric($metricIdRaw) || (int) $metricIdRaw <= 0) {
+            return ApiResponse::error(400, 'metric_id must be a positive integer.', $path);
         }
-        $entityId = (int) $entityRaw;
+        $metricId = (int) $metricIdRaw;
 
-        $metricId = null;
-        $metricRaw = $request->query->get('metric_id');
-        if ($metricRaw !== null && $metricRaw !== '') {
-            if (!is_numeric($metricRaw) || (int) $metricRaw <= 0) {
-                return ApiResponse::error(400, 'metric_id must be a positive integer.', $path);
-            }
-            $metricId = (int) $metricRaw;
+        $startRaw = (string) ($request->query->get('start_time') ?? $request->query->get('start') ?? '');
+        $endRaw = (string) ($request->query->get('end_time') ?? $request->query->get('end') ?? '');
+
+        if ($startRaw === '' || $endRaw === '') {
+            return ApiResponse::error(400, 'Both start_time and end_time query parameters are required.', $path);
         }
 
-        $startRaw = (string) $request->query->get('start_time', '');
-        $endRaw = (string) $request->query->get('end_time', '');
-
-        $now = new DateTimeImmutable('now');
-        $start = $startRaw === '' ? $now->modify('-24 hours') : $this->parseIsoDateTime($startRaw);
+        $start = $this->parseIsoDateTime($startRaw);
         if ($start === null) {
             return ApiResponse::error(400, 'Invalid start_time. Use ISO 8601 datetime.', $path);
         }
 
-        $end = $endRaw === '' ? $now : $this->parseIsoDateTime($endRaw);
+        $end = $this->parseIsoDateTime($endRaw);
         if ($end === null) {
             return ApiResponse::error(400, 'Invalid end_time. Use ISO 8601 datetime.', $path);
         }
@@ -55,7 +49,6 @@ final class ReadingsController
         if (!is_numeric($limitRaw)) {
             return ApiResponse::error(400, 'limit must be numeric.', $path);
         }
-
         $limit = (int) $limitRaw;
         if ($limit < 1 || $limit > 10000) {
             return ApiResponse::error(400, 'limit must be between 1 and 10000.', $path);
@@ -65,26 +58,12 @@ final class ReadingsController
             $pdo = Database::connectFromEnv();
             $repo = new MeasurementRepository($pdo);
 
-            if (!$repo->entityExists($entityId)) {
-                return ApiResponse::error(404, sprintf('entity_id %d not found.', $entityId), $path);
+            if (!$repo->metricExists($metricId)) {
+                return ApiResponse::error(404, sprintf('metric_id %d not found.', $metricId), $path);
             }
 
-            if ($metricId !== null) {
-                if (!$repo->metricExists($metricId)) {
-                    return ApiResponse::error(404, sprintf('metric_id %d not found.', $metricId), $path);
-                }
-
-                if (!$repo->metricBelongsToEntity($metricId, $entityId)) {
-                    return ApiResponse::error(
-                        400,
-                        'metric_id does not belong to the provided entity_id.',
-                        $path,
-                    );
-                }
-            }
-
-            $rows = $repo->fetchByEntityAndRange($entityId, $start, $end, $limit, $metricId);
-        } catch (PDOException) {
+            $rows = $repo->fetchByMetricAndRange($metricId, $start, $end, $limit);
+        } catch (PDOException $e) {
             return ApiResponse::error(500, 'Database error while retrieving readings.', $path);
         }
 
@@ -92,7 +71,6 @@ final class ReadingsController
             'timestamp' => (new DateTimeImmutable((string) $row['timestamp']))->format(DATE_ATOM),
             'value' => (float) $row['value'],
             'metric_id' => (int) $row['metric_id'],
-            'entity_id' => (int) $row['entity_id'],
         ], $rows);
 
         return new JsonResponse($payload);

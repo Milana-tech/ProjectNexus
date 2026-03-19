@@ -20,12 +20,12 @@ final class Database
         }
 
         $host = $parts['host'] ?? 'localhost';
-        $port = (int) ($parts['port'] ?? 5432);
+        $port = $parts['port'] ?? 5432;
         $user = $parts['user'] ?? '';
         $pass = $parts['pass'] ?? '';
         $dbName = ltrim($parts['path'] ?? '', '/');
 
-        $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s', $host, $port, $dbName);
+        $dsn = sprintf('pgsql:host=%s;port=%d;dbname=%s', $host, (int) $port, $dbName);
 
         return new PDO($dsn, $user, $pass, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
