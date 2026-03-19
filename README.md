@@ -66,3 +66,33 @@ All settings are in `.env`:
 |---|---|---|
 | `/health` | GET | Service health check |
 | `/db` | GET | Database connectivity check |
+
+## Performance test (ingest)
+
+A quick performance test script is included to validate bulk ingest behaviour.
+
+- Script: [scripts/perf_ingest_test.py](scripts/perf_ingest_test.py)
+
+Prerequisites:
+
+1. Start the stack with Docker Compose so services are available:
+
+```bash
+docker compose up --build -d
+```
+
+2. Ensure the simulator has run once (it bootstraps demo `zones` and `metrics`) or run the simulator bootstrap manually.
+
+Run the test (from repository root):
+
+```bash
+python scripts/perf_ingest_test.py
+```
+
+What the test does:
+
+- Posts 500 valid readings in a single request to the PHP `/ingest` endpoint (via `http://localhost:8001/ingest`).
+- Measures end-to-end elapsed time and checks it completes within 5s.
+- Samples the `project-nexus-backend-php` container memory before and after the request and flags large memory growth.
+
+If you want CI integration or different thresholds, tell me and I will add a pytest wrapper for this script.
