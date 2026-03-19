@@ -2,11 +2,13 @@ import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import GreenhouseDashboard from './Dashboard';
 import MeasurementsView from './MeasurementsView';
+import MergedReadingsTable from './MergedReadingsTable';
 import './index.css';
 
 const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'measurements', label: 'Measurements & Anomalies' },
+    { id: 'combined', label: 'Combined View' },
 ];
 
 function App() {
@@ -14,7 +16,7 @@ function App() {
 
     return (
         <div>
-            {/* Tab bar — matches Space Mono font, green accent, light bg */}
+            {/* Tab bar */}
             <div style={{
                 display: 'flex',
                 gap: 0,
@@ -49,6 +51,7 @@ function App() {
 
             {active === 'dashboard' && <GreenhouseDashboard />}
             {active === 'measurements' && <MeasurementsView />}
+            {active === 'combined' && <MergedReadingsTable />}
         </div>
     );
 }

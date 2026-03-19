@@ -151,6 +151,37 @@ def get_zones():
         log.exception("Failed to load zones")
         raise HTTPException(status_code=500, detail="Failed to load zones") from e
 
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+@app.get("/metrics")
+def get_metrics():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT m.id, m.name, m.unit, z.name AS zone_name
+                    FROM metrics m
+                    JOIN devices d ON d.id = m.device_id
+                    JOIN zones z ON z.id = d.zone_id
+                    ORDER BY z.name, m.name;
+                """)
+                rows = cur.fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "unit": row["unit"],
+                "zone": row["zone_name"],
+            }
+            for row in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load metrics")
+        raise HTTPException(status_code=500, detail="Failed to load metrics") from e
 
 # ---------------------------------------------------------------------------
 # Entities  (domain-agnostic alias for /zones — used by the frontend dropdown)
@@ -508,6 +539,8 @@ def run_anomaly(
                         VALUES (%s, %s, %s, %s, %s)
                     """, (mid, algorithm_id, timestamps[i], r["score"], r["flag"]))
             conn.commit()
+    except HTTPException:
+            raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store results: {e}")
 
@@ -517,11 +550,11 @@ def run_anomaly(
 @app.get("/anomalies")
 async def get_anomalies(metric_id: str, start: str, end: str):
     try:
-        start_dt = datetime.fromisoformat(start)
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end)
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
@@ -548,6 +581,7 @@ async def get_anomalies(metric_id: str, start: str, end: str):
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+
     except HTTPException:
         raise
     except Exception as e:
@@ -562,7 +596,7 @@ async def get_anomalies(metric_id: str, start: str, end: str):
         for r in rows
     ]
 
-# -----------------------------------------------------x----------------------
+# ---------------------------------------------------------------------------
 # Entry point (for local dev without Docker)
 # ---------------------------------------------------------------------------
 
