@@ -26,6 +26,10 @@ const COLOR_PALETTE = [
   "#84cc16",
 ];
 
+const DEMO_ENTITY_NAME = "Zone 1";
+const DEMO_METRIC_NAME = "temperature";
+const DEMO_RANGE_MS = 6 * 60 * 60 * 1000;
+
 function getMetricColor(metricName, allMetricNames) {
   const idx = allMetricNames.indexOf(metricName);
   return COLOR_PALETTE[idx % COLOR_PALETTE.length];
@@ -344,6 +348,43 @@ function DropdownError({ message }) {
   );
 }
 
+function DemoBanner({ onDismiss }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "#eff6ff",
+        border: "1px solid #bfdbfe",
+        borderRadius: 8,
+        padding: "10px 16px",
+        marginBottom: 16,
+        fontSize: 13,
+        color: "#1d4ed8",
+      }}
+    >
+      <span>
+        <strong>Demo mode</strong> - showing seeded greenhouse data
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        style={{
+          background: "none",
+          border: "none",
+          cursor: "pointer",
+          fontSize: 16,
+          color: "#93c5fd",
+          padding: "0 4px",
+        }}
+      >
+        x
+      </button>
+    </div>
+  );
+}
+
 // ─── main dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -376,12 +417,39 @@ export default function Dashboard() {
   const [anomalies,          setAnomalies]         = useState([]);
   const [anomalyError,       setAnomalyError]      = useState(null);
 
+  const [demoMode,           setDemoMode]          = useState(false);
+  const [showDemoBanner,     setShowDemoBanner]    = useState(false);
+
   const [lastUpdated,     setLastUpdated]     = useState(null);
+
+  const pendingDemoLoadRef = useRef(false);
 
   const metricNames = metrics.map((m) => m.name);
   const chartColor  = selectedMetric
     ? getMetricColor(selectedMetric.name, metricNames)
     : COLOR_PALETTE[0];
+
+  const loadDemoState = useCallback((availableEntities) => {
+    if (!Array.isArray(availableEntities) || availableEntities.length === 0) return false;
+    const demoEntity = availableEntities.find(
+      (e) => e.label.toLowerCase() === DEMO_ENTITY_NAME.toLowerCase()
+    );
+    if (!demoEntity) return false;
+
+    const now = Date.now();
+    pendingDemoLoadRef.current = true;
+    setFromTs(now - DEMO_RANGE_MS);
+    setToTs(now);
+    setActiveRange(-1);
+    setRangeError(null);
+    setShowAnomalies(true);
+    setRunError(null);
+    setAnomalyError(null);
+    setDemoMode(true);
+    setShowDemoBanner(true);
+    setSelectedEntity(demoEntity.id);
+    return true;
+  }, []);
 
   useEffect(() => {
     setLoadingEntities(true);
@@ -400,14 +468,15 @@ export default function Dashboard() {
         }
         if (config?.app_title) setAppTitle(config.app_title);
         setEntities(ents);
-        if (ents.length) setSelectedEntity(ents[0].id);
+        const demoLoaded = loadDemoState(ents);
+        if (!demoLoaded && ents.length) setSelectedEntity(ents[0].id);
         setLoadingEntities(false);
       })
       .catch((err) => {
         setEntityError(err.message ?? "Could not load entities.");
         setLoadingEntities(false);
       });
-  }, []);
+  }, [loadDemoState]);
 
   useEffect(() => {
     if (!selectedEntity) return;
@@ -420,11 +489,16 @@ export default function Dashboard() {
     fetchMetrics(selectedEntity)
       .then((ms) => {
         setMetrics(ms);
-        if (ms.length) setSelectedMetric(ms[0]);
+        const demoMetric = pendingDemoLoadRef.current
+          ? ms.find((m) => m.name.toLowerCase() === DEMO_METRIC_NAME.toLowerCase())
+          : null;
+        if (ms.length) setSelectedMetric(demoMetric ?? ms[0]);
+        pendingDemoLoadRef.current = false;
         setLoadingMetrics(false);
       })
       .catch((err) => {
         setMetricError(err.message ?? "Could not load metrics.");
+        pendingDemoLoadRef.current = false;
         setLoadingMetrics(false);
       });
   }, [selectedEntity]);
@@ -465,6 +539,8 @@ export default function Dashboard() {
   // ── quick range ───────────────────────────────────────────────────────────
   function applyQuickRange(idx) {
     const now = Date.now();
+    setDemoMode(false);
+    setShowDemoBanner(false);
     setActiveRange(idx);
     setToTs(now);
     setFromTs(now - (quickRanges[idx]?.ms ?? 6 * 60 * 60 * 1000));
@@ -474,6 +550,8 @@ export default function Dashboard() {
   function handleFromChange(e) {
     const ts = new Date(e.target.value).getTime();
     if (isNaN(ts)) { setRangeError("Invalid start date/time format."); return; }
+    setDemoMode(false);
+    setShowDemoBanner(false);
     setActiveRange(-1);
     setFromTs(ts);
     setRangeError(ts >= toTs ? "Start must be before end." : null);
@@ -482,6 +560,8 @@ export default function Dashboard() {
   function handleToChange(e) {
     const ts = new Date(e.target.value).getTime();
     if (isNaN(ts)) { setRangeError("Invalid end date/time format."); return; }
+    setDemoMode(false);
+    setShowDemoBanner(false);
     setActiveRange(-1);
     setToTs(ts);
     setRangeError(ts <= fromTs ? "End must be after start." : null);
@@ -627,7 +707,7 @@ export default function Dashboard() {
     <div className="dash">
 
       {/* Header */}
-      <div className="header">
+      <div className="header" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
           <div className="header-badge">
             <span className="pulse" />Live Monitor
@@ -639,7 +719,28 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => loadDemoState(entities)}
+          style={{
+            background: "#f0fdf4",
+            color: "#15803d",
+            border: "1px solid #86efac",
+            borderRadius: 8,
+            padding: "8px 16px",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: "pointer",
+            alignSelf: "flex-start",
+          }}
+        >
+          Load Demo
+        </button>
       </div>
+
+      {demoMode && showDemoBanner && (
+        <DemoBanner onDismiss={() => setShowDemoBanner(false)} />
+      )}
 
       {dataError && (
         <div style={{
@@ -696,7 +797,12 @@ export default function Dashboard() {
             <select
               id="entity-select"
               value={selectedEntity ?? ""}
-              onChange={(e) => setSelectedEntity(e.target.value)}
+              onChange={(e) => {
+                setDemoMode(false);
+                setShowDemoBanner(false);
+                pendingDemoLoadRef.current = false;
+                setSelectedEntity(e.target.value);
+              }}
             >
               {entities.length === 0 && !entityError && (
                 <option value="">No entities available</option>
@@ -725,6 +831,8 @@ export default function Dashboard() {
               id="metric-select"
               value={selectedMetric?.id ?? ""}
               onChange={(e) => {
+                setDemoMode(false);
+                setShowDemoBanner(false);
                 const m = metrics.find((x) => x.id === e.target.value);
                 setSelectedMetric(m ?? null);
               }}
