@@ -402,7 +402,7 @@ def get_readings(
                 "SELECT id, metric_id, timestamp, value, created_at "
                 "FROM readings "
                 f"WHERE {' AND '.join(conditions)} "
-                "ORDER BY timestamp DESC LIMIT %s",
+                "ORDER BY timestamp ASC LIMIT %s",
                 params,
             )
             rows = cur.fetchall()
@@ -542,6 +542,10 @@ def get_anomalies(
     try:
         with get_conn() as conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT id FROM metrics WHERE id = %s", (mid,))
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
+
                 cur.execute("""
                     SELECT timestamp, anomaly_score, anomaly_flag
                     FROM anomaly_results
@@ -555,7 +559,7 @@ def get_anomalies(
 
     return [
         {
-            "timestamp": str(r["timestamp"]),
+            "timestamp": r["timestamp"].isoformat(),
             "score": r["anomaly_score"],
             "flag": r["anomaly_flag"],
         }
