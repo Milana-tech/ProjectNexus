@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -49,6 +49,15 @@ async function fetchConfig() {
   const res = await fetch(`${API_BASE}/config`);
   if (!res.ok) throw new Error("Failed to fetch config");
   return res.json();
+}
+
+async function fetchAlgorithms() {
+  const res = await fetch(`${API_BASE}/algorithms`);
+  if (!res.ok) throw new Error(`Failed to fetch algorithms (${res.status}: ${res.statusText})`);
+  const data = await res.json();
+  return Array.isArray(data)
+    ? data.map((a) => ({ name: String(a.name ?? ""), label: String(a.label ?? a.name ?? "") }))
+    : [];
 }
 
 // ─── useReadings hook ─────────────────────────────────────────────────────────
@@ -140,12 +149,46 @@ function formatTick(t, range) {
   return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
 }
 
+function parseApiTimestamp(value) {
+  const direct = new Date(value).getTime();
+  if (!isNaN(direct)) return direct;
+  if (typeof value === "string") {
+    const normalized = new Date(value.replace(" ", "T")).getTime();
+    if (!isNaN(normalized)) return normalized;
+  }
+  return null;
+}
+
+function toSecondKey(ts) {
+  return Number.isFinite(ts) ? Math.floor(ts / 1000) : null;
+}
+
+function parseApiScore(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function toRunErrorMessage(detail) {
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  return "Failed to run anomaly detection. Please try again.";
+}
+
 // ─── sub-components ───────────────────────────────────────────────────────────
 
-function CustomTooltip({ active, payload, label, unit }) {
+export function CustomTooltip({ active, payload, label, unit }) {
   if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload;
+  const isAnomaly = !!point?.isAnomaly;
+  const anomalyScore = point?.anomalyScore;
+  const hasValidTimestamp = Number.isFinite(new Date(label).getTime());
+  const primaryValue = payload[0]?.value;
+  const hasValue = primaryValue !== null && primaryValue !== undefined;
+  const hasScore = Number.isFinite(anomalyScore);
+  const showAnomalyDetails = isAnomaly && hasValidTimestamp && hasValue && hasScore;
   return (
-    <div style={{
+    <div
+      data-testid="metric-tooltip"
+      style={{
       background: "rgba(255,255,255,0.97)",
       border: "1px solid #e2e8f0",
       borderRadius: 10,
@@ -153,9 +196,11 @@ function CustomTooltip({ active, payload, label, unit }) {
       fontSize: 13,
       color: "#1e293b",
       boxShadow: "0 4px 20px rgba(0,0,0,0.10)",
-    }}>
+      position: "relative",
+    }}
+    >
       <div style={{ marginBottom: 6, color: "#94a3b8", fontSize: 11, fontFamily: "Space Mono, monospace" }}>
-        {new Date(label).toLocaleString()}
+        {hasValidTimestamp ? new Date(label).toLocaleString() : "Unknown time"}
       </div>
       {payload.map((p) => (
         <div key={p.dataKey} style={{ display: "flex", gap: 12, justifyContent: "space-between" }}>
@@ -165,6 +210,35 @@ function CustomTooltip({ active, payload, label, unit }) {
           </strong>
         </div>
       ))}
+      {showAnomalyDetails && (
+        <div
+          data-testid="anomaly-tooltip-details"
+          style={{
+            marginTop: 8,
+            paddingTop: 8,
+            borderTop: "1px solid #e2e8f0",
+            borderRadius: 8,
+            background: "rgba(254, 226, 226, 0.55)",
+            padding: "8px 10px",
+          }}
+        >
+          <div style={{ color: "#991b1b", fontWeight: 700, marginBottom: 6 }}>Anomaly Event</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Timestamp</span>
+            <strong style={{ color: "#7f1d1d" }}>{new Date(label).toLocaleString()}</strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Value</span>
+            <strong style={{ color: "#7f1d1d" }}>
+              {primaryValue}{unit ? ` ${unit}` : ""}
+            </strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#7f1d1d" }}>Score</span>
+            <strong style={{ color: "#7f1d1d" }}>{anomalyScore}</strong>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -232,7 +306,19 @@ function MetricLineChart({ data, loading, metricName, unit, fromTs, toTs, color 
               name={metricName || "Value"}
               stroke={color}
               strokeWidth={2}
-              dot={false}
+              dot={(props) => {
+                if (!props?.payload?.isAnomaly) return null;
+                return (
+                  <circle
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={4}
+                    fill="#dc2626"
+                    stroke="#ffffff"
+                    strokeWidth={1.5}
+                  />
+                );
+              }}
               activeDot={{ r: 4, fill: color }}
             />
           </LineChart>
@@ -282,6 +368,17 @@ export default function Dashboard() {
   const [selectedMetric,  setSelectedMetric]  = useState(null);
   const [loadingMetrics,  setLoadingMetrics]  = useState(false);
   const [metricError,     setMetricError]     = useState(null); 
+
+  const [algorithms,         setAlgorithms]      = useState([]);
+  const [selectedAlgorithm,  setSelectedAlgorithm] = useState("");
+  const [loadingAlgorithms,  setLoadingAlgorithms] = useState(false);
+  const [algorithmError,     setAlgorithmError]    = useState(null);
+  const [runLoading,         setRunLoading]        = useState(false);
+  const [runError,           setRunError]          = useState(null);
+  const [showAnomalies,      setShowAnomalies]     = useState(false);
+  const [anomalyLoading,     setAnomalyLoading]    = useState(false);
+  const [anomalies,          setAnomalies]         = useState([]);
+  const [anomalyError,       setAnomalyError]      = useState(null);
 
   const [lastUpdated,     setLastUpdated]     = useState(null);
 
@@ -336,6 +433,27 @@ export default function Dashboard() {
       });
   }, [selectedEntity]);
 
+  useEffect(() => {
+    setLoadingAlgorithms(true);
+    setAlgorithmError(null);
+
+    fetchAlgorithms()
+      .then((rows) => {
+        const valid = rows.filter((a) => a.name && a.label);
+        setAlgorithms(valid);
+        setSelectedAlgorithm((current) =>
+          valid.some((a) => a.name === current) ? current : ""
+        );
+        setLoadingAlgorithms(false);
+      })
+      .catch((err) => {
+        setAlgorithmError(err.message ?? "Could not load algorithms.");
+        setAlgorithms([]);
+        setSelectedAlgorithm("");
+        setLoadingAlgorithms(false);
+      });
+  }, []);
+
   // ── readings ─────────────────────────────────────────────────────────────
   const { data, loading: loadingData, error: dataError } = useReadings({
     metricId: selectedMetric?.id ?? null,
@@ -373,6 +491,105 @@ export default function Dashboard() {
     setRangeError(ts <= fromTs ? "End must be after start." : null);
   }
 
+  const loadAnomalies = useCallback(async ({ metricId, startTs, endTs }) => {
+    if (!metricId || !startTs || !endTs) {
+      setAnomalies([]);
+      return;
+    }
+
+    setAnomalyLoading(true);
+    setAnomalyError(null);
+    try {
+      const qs = new URLSearchParams({
+        metric_id: String(metricId),
+        start: new Date(startTs).toISOString(),
+        end: new Date(endTs).toISOString(),
+      });
+
+      const res = await fetch(`${API_BASE}/anomalies?${qs}`);
+      if (!res.ok) throw new Error(`Failed to fetch anomalies (${res.status}: ${res.statusText})`);
+
+      const json = await res.json();
+      const rows = Array.isArray(json) ? json : [];
+      const next = rows
+        .filter((a) => !!a?.flag)
+        .map((a) => {
+          const ts = parseApiTimestamp(a.timestamp);
+          const score = parseApiScore(a.score);
+          if (ts === null) return null;
+          return { ts, score };
+        })
+        .filter((entry) => entry !== null);
+
+      setAnomalies(next);
+    } catch (err) {
+      setAnomalyError(err.message ?? "Failed to fetch anomalies.");
+      setAnomalies([]);
+    } finally {
+      setAnomalyLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showAnomalies || !selectedMetric?.id || !fromTs || !toTs || rangeError) {
+      setAnomalies([]);
+      setAnomalyError(null);
+      setAnomalyLoading(false);
+      return;
+    }
+
+    loadAnomalies({
+      metricId: selectedMetric.id,
+      startTs: fromTs,
+      endTs: toTs,
+    });
+  }, [showAnomalies, selectedMetric?.id, fromTs, toTs, rangeError, loadAnomalies]);
+
+  async function handleRunDetection() {
+    if (!selectedMetric?.id || !selectedAlgorithm || !fromTs || !toTs || rangeError || runLoading) return;
+
+    const metricId = selectedMetric.id;
+    const startTs = fromTs;
+    const endTs = toTs;
+
+    setRunLoading(true);
+    setRunError(null);
+
+    try {
+      const qs = new URLSearchParams({
+        metric_id: String(metricId),
+        algorithm: selectedAlgorithm,
+        start: new Date(startTs).toISOString(),
+        end: new Date(endTs).toISOString(),
+      });
+
+      const res = await fetch(`${API_BASE}/anomalies/run?${qs}`, { method: "POST" });
+      if (!res.ok) {
+        let detail = null;
+        try {
+          const body = await res.json();
+          detail = body?.detail ?? null;
+        } catch {
+          detail = null;
+        }
+        throw new Error(toRunErrorMessage(detail));
+      }
+      if (showAnomalies) {
+        await loadAnomalies({ metricId, startTs, endTs });
+      } else {
+        setAnomalies([]);
+      }
+      setRunError(null);
+    } catch (err) {
+      const msg = typeof err?.message === "string" && err.message.trim()
+        ? err.message.trim()
+        : "Failed to run anomaly detection. Please try again.";
+      setRunError(msg);
+    } finally {
+      setRunLoading(false);
+    }
+  }
+
   const latestValue = data.at(-1)?.value;
   const avgValue    = data.length
     ? (data.reduce((s, r) => s + r.value, 0) / data.length).toFixed(2) : null;
@@ -383,6 +600,32 @@ export default function Dashboard() {
 
   const unit       = selectedMetric?.unit ?? "";
   const metricName = selectedMetric?.name ?? "";
+  const canShowRunDetectionButton =
+    !!selectedMetric && !!fromTs && !!toTs && !rangeError;
+  const runDetectionDisabled =
+    !selectedMetric ||
+    !selectedAlgorithm ||
+    !fromTs ||
+    !toTs ||
+    !!rangeError ||
+    runLoading;
+  const chartData = useMemo(() => {
+    if (!data.length) return [];
+    if (!showAnomalies || !anomalies.length) return data;
+    const anomalyMap = new Map(
+      anomalies
+        .map((entry) => {
+          const key = toSecondKey(entry.ts);
+          return key === null ? null : [key, entry.score];
+        })
+        .filter((entry) => entry !== null)
+    );
+    return data.map((point) => ({
+      ...point,
+      isAnomaly: anomalyMap.has(toSecondKey(point.time)),
+      anomalyScore: anomalyMap.get(toSecondKey(point.time)) ?? null,
+    }));
+  }, [data, anomalies, showAnomalies]);
 
   return (
     <div className="dash">
@@ -409,6 +652,40 @@ export default function Dashboard() {
           marginBottom: 20, border: "1px solid #f87171",
         }}>
           <strong>Error:</strong> {dataError}
+        </div>
+      )}
+
+      {runError && (
+        <div style={{
+          background: "#fee2e2",
+          color: "#b91c1c",
+          padding: "12px 20px",
+          borderRadius: 8,
+          marginBottom: 20,
+          border: "1px solid #f87171",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}>
+          <div>
+            <strong>Run failed:</strong> {runError}
+          </div>
+          <button
+            type="button"
+            onClick={() => setRunError(null)}
+            style={{
+              border: "1px solid #fca5a5",
+              background: "#ffffff",
+              color: "#b91c1c",
+              borderRadius: 6,
+              padding: "4px 8px",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -470,6 +747,31 @@ export default function Dashboard() {
           {metricError && <DropdownError message={metricError} />}
         </div>
 
+        <div className="control-group">
+          <label htmlFor="algorithm-select">Algorithm</label>
+          {loadingAlgorithms ? (
+            <select id="algorithm-select" disabled>
+              <option>Loading algorithms…</option>
+            </select>
+          ) : (
+            <select
+              id="algorithm-select"
+              value={selectedAlgorithm}
+              onChange={(e) => setSelectedAlgorithm(e.target.value)}
+              disabled={algorithms.length === 0}
+            >
+              <option value="">Select algorithm</option>
+              {algorithms.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {algorithmError && <DropdownError message={algorithmError} />}
+        </div>
+
         <div className="divider" />
 
         <div className="control-group">
@@ -488,6 +790,29 @@ export default function Dashboard() {
         </div>
 
         <div className="divider" />
+
+        <div className="control-group">
+          <label>&nbsp;</label>
+          <button
+            type="button"
+            aria-pressed={showAnomalies}
+            onClick={() => setShowAnomalies((v) => !v)}
+            style={{
+              background: showAnomalies ? "#dc2626" : "#e2e8f0",
+              border: "1px solid",
+              borderColor: showAnomalies ? "#dc2626" : "#cbd5e1",
+              borderRadius: 7,
+              color: showAnomalies ? "#ffffff" : "#334155",
+              fontFamily: "Space Mono, monospace",
+              fontSize: 12,
+              padding: "8px 12px",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Show Anomalies: {showAnomalies ? "ON" : "OFF"}
+          </button>
+        </div>
 
         <div className="control-group">
           <label htmlFor="from-date">From</label>
@@ -510,6 +835,46 @@ export default function Dashboard() {
             style={rangeError ? { borderColor: "#ef4444", outline: "none" } : {}}
           />
         </div>
+
+        {canShowRunDetectionButton && (
+          <div className="control-group">
+            <label>&nbsp;</label>
+            <button
+              type="button"
+              disabled={runDetectionDisabled}
+              onClick={handleRunDetection}
+              style={{
+                background: runDetectionDisabled ? "#e2e8f0" : "#10b981",
+                border: "1px solid",
+                borderColor: runDetectionDisabled ? "#cbd5e1" : "#10b981",
+                borderRadius: 7,
+                color: runDetectionDisabled ? "#64748b" : "#ffffff",
+                fontFamily: "Space Mono, monospace",
+                fontSize: 12,
+                padding: "8px 12px",
+                cursor: runDetectionDisabled ? "not-allowed" : "pointer",
+                whiteSpace: "nowrap",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              {runLoading && (
+                <span
+                  style={{
+                    width: 12,
+                    height: 12,
+                    border: "2px solid rgba(255,255,255,0.45)",
+                    borderTopColor: "#ffffff",
+                    borderRadius: "50%",
+                    animation: "spin 0.8s linear infinite",
+                  }}
+                />
+              )}
+              {runLoading ? "Running..." : "Run Detection"}
+            </button>
+          </div>
+        )}
       </div>
 
       {rangeError && (
@@ -524,6 +889,34 @@ export default function Dashboard() {
         </div>
       )}
 
+      {showAnomalies && anomalyLoading && (
+        <div style={{
+          background: "#eff6ff",
+          color: "#1d4ed8",
+          padding: "10px 18px",
+          borderRadius: 8,
+          marginBottom: 16,
+          border: "1px solid #bfdbfe",
+          fontSize: 13,
+        }}>
+          Loading anomaly markers...
+        </div>
+      )}
+
+      {showAnomalies && anomalyError && (
+        <div style={{
+          background: "#fee2e2",
+          color: "#b91c1c",
+          padding: "10px 18px",
+          borderRadius: 8,
+          marginBottom: 16,
+          border: "1px solid #fca5a5",
+          fontSize: 13,
+        }}>
+          <strong>Anomaly fetch failed:</strong> {anomalyError}
+        </div>
+      )}
+
       {/* Stats */}
       <div className="stats-row">
         <StatCard label="Current" value={latestValue ?? "–"} unit={unit} color={chartColor} />
@@ -534,7 +927,7 @@ export default function Dashboard() {
 
       {/* Chart */}
       <MetricLineChart
-        data={data}
+        data={chartData}
         loading={loadingData}
         metricName={metricName}
         unit={unit}
