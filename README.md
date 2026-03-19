@@ -66,3 +66,49 @@ All settings are in `.env`:
 |---|---|---|
 | `/health` | GET | Service health check |
 | `/db` | GET | Database connectivity check |
+
+## Performance test (ingest)
+
+A quick performance test script is included to validate bulk ingest behaviour.
+
+- Script: [scripts/perf_ingest_test.py](scripts/perf_ingest_test.py)
+
+Prerequisites:
+
+1. Start the stack with Docker Compose so services are available:
+
+```bash
+docker compose up --build -d
+```
+
+2. Ensure the simulator has run once (it bootstraps demo `zones` and `metrics`) or run the simulator bootstrap manually.
+
+Run the test (from repository root):
+
+```bash
+python scripts/perf_ingest_test.py
+```
+
+What the test does:
+
+- Posts 500 valid readings in a single request to the PHP `/ingest` endpoint (via `http://localhost:8001/ingest`).
+- Measures end-to-end elapsed time and checks it completes within 5s.
+- Samples the `project-nexus-backend-php` container memory before and after the request and flags large memory growth.
+
+If you want CI integration or different thresholds, tell me and I will add a pytest wrapper for this script.
+
+## Ingest behaviour
+
+The PHP ingestion endpoint performs strict pre-flight validation before persisting readings:
+
+- It verifies that each `entity_id` (zone) and `metric_id` exists in the master tables and rejects the request with HTTP 400 if any ID is missing. The error response lists which `entity_id` or `metric_id` values were not found.
+- The validation is implemented with an optimized query that minimizes database round-trips to keep validation latency low.
+- Valid payloads are mapped to the internal readings model and inserted into the `readings` table using a single multi-row `INSERT` inside a transaction.
+- Database connection or insert failures return HTTP 500 with a generic error message (no raw DB driver output is exposed to the client).
+
+Relevant implementation:
+
+- Ingest controller: [backend-php/src/Controller/IngestController.php](backend-php/src/Controller/IngestController.php#L1-L200)
+- Quick validation script: [scripts/test_ingest_check.py](scripts/test_ingest_check.py#L1-L200)
+
+If you want me to run a latency measurement for the pre-flight validation (to confirm it stays under 50ms) I can run the test and report back.

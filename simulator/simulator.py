@@ -39,7 +39,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is not set")
 
-API_BASE_URL = os.getenv("API_BASE_URL", "http://backend:8000")
+USE_INGEST = os.getenv("SIM_USE_INGEST", "true").lower() in ("1", "true", "yes")
+API_BASE_URL = os.getenv("API_BASE_URL")
+if not API_BASE_URL:
+    API_BASE_URL = "http://backend_php:8000" if USE_INGEST else "http://backend:8000"
+
 ZONE_NAME    = os.getenv("SIM_ZONE_NAME", "Zone 1")
 DEVICE_NAME  = os.getenv("SIM_DEVICE_NAME", "Greenhouse A")
 DEVICE_TYPE  = os.getenv("SIM_DEVICE_TYPE", "greenhouse")
@@ -86,7 +90,7 @@ def wait_for_db(retries: int = 20, delay: float = 3.0) -> psycopg.Connection:
     raise RuntimeError("Could not connect to database after %d attempts." % retries)
 
 
-def bootstrap(conn: psycopg.Connection) -> dict[str, int]:
+def bootstrap(conn: psycopg.Connection) -> tuple[int, dict[str, int]]:
     """
     Ensure the zone, device, and all metrics exist.
     Returns {metric_name: metric_id}.
@@ -136,7 +140,8 @@ def bootstrap(conn: psycopg.Connection) -> dict[str, int]:
             log.info("  Metric '%s' id=%d", metric_name, metric_id)
 
         conn.commit()
-    return metric_ids
+    conn.commit()
+    return zone_id, metric_ids
 
 
 # ---------------------------------------------------------------------------
@@ -162,14 +167,21 @@ def wait_for_api(retries: int = 20, delay: float = 3.0) -> None:
 
 def post_readings(readings: list[dict]) -> None:
     try:
-        r = httpx.post(f"{API_BASE_URL}/readings/bulk", json={"readings": readings}, timeout=10)
-        if r.status_code == 200:
-            body = r.json()
-            log.info("API accepted: inserted=%d errors=%d", body["inserted"], len(body["errors"]))
-            for err in body["errors"]:
-                log.error("  Row error: %s", err)
+        if USE_INGEST:
+            r = httpx.post(f"{API_BASE_URL}/ingest", json=readings, timeout=10)
+            if r.status_code in (200, 201):
+                log.info("Ingest accepted: status=%d body=%s", r.status_code, r.text[:200])
+            else:
+                log.error("Ingest rejected: status=%d body=%s", r.status_code, r.text[:300])
         else:
-            log.error("API rejected batch: status=%d body=%s", r.status_code, r.text[:300])
+            r = httpx.post(f"{API_BASE_URL}/readings/bulk", json={"readings": readings}, timeout=10)
+            if r.status_code == 200:
+                body = r.json()
+                log.info("API accepted: inserted=%d errors=%d", body["inserted"], len(body["errors"]))
+                for err in body["errors"]:
+                    log.error("  Row error: %s", err)
+            else:
+                log.error("API rejected batch: status=%d body=%s", r.status_code, r.text[:300])
     except Exception as exc:
         log.error("Failed to POST readings: %s", exc)
 
@@ -178,7 +190,7 @@ def post_readings(readings: list[dict]) -> None:
 # Main loop
 # ---------------------------------------------------------------------------
 
-def run_loop(metric_ids: dict[str, int]) -> None:
+def run_loop(metric_ids: dict[str, int], zone_id: int | None = None) -> None:
     iteration = 0
     log.info(
         "Starting insert loop — interval=%ss, spike every %s readings",
@@ -192,7 +204,10 @@ def run_loop(metric_ids: dict[str, int]) -> None:
         batch: list[dict] = []
         for metric_name, metric_id in metric_ids.items():
             value = spike_value(metric_name) if is_spike else normal_value(metric_name)
-            batch.append({"metric_id": metric_id, "timestamp": now, "value": value})
+            if USE_INGEST:
+                batch.append({"entity_id": zone_id, "metric_id": metric_id, "timestamp": now, "value": value})
+            else:
+                batch.append({"metric_id": metric_id, "timestamp": now, "value": value})
             log.log(
                 logging.WARNING if is_spike else logging.INFO,
                 "%s  iter=%-4d  metric=%-15s  value=%s",
@@ -216,8 +231,8 @@ if __name__ == "__main__":
     )
 
     conn = wait_for_db()
-    metric_ids = bootstrap(conn)
+    zone_id, metric_ids = bootstrap(conn)
     conn.close()  # DB only needed for bootstrap; readings go via API
 
     wait_for_api()
-    run_loop(metric_ids)
+    run_loop(metric_ids, zone_id)
