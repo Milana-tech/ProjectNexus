@@ -37,6 +37,11 @@ app.add_middleware(
 )
 
 
+def _parse_iso(value: str) -> datetime:
+    """Parse an ISO 8601 datetime string, accepting both Z and +00:00 suffixes."""
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 def get_conn() -> psycopg.Connection:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
@@ -364,7 +369,7 @@ def get_readings_by_zone(
     if end.tzinfo is None:
         end = end.replace(tzinfo=timezone.utc)
 
-    if start > end:
+    if start >= end:
         raise HTTPException(status_code=400, detail=_error_schema("start must be before end", field=None))
 
     with get_conn() as conn:
@@ -403,38 +408,59 @@ def get_readings(
     end: str       = Query(None, description="End datetime, ISO 8601"),
     limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
-    with get_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (metric_id,))
-            metric = cur.fetchone()
-            if not metric:
-                raise HTTPException(status_code=404, detail=_error_schema(f"metric_id {metric_id} not found.", field="metric_id"))
+    try:
+        mid = int(metric_id)
+        if mid <= 0:
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(status_code=400, detail=_error_schema(f"Invalid metric_id: '{metric_id}'. Expected a positive numeric id.", field="metric_id"))
 
-            if start and start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            if end and end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            if start and end and end < start:
-                raise HTTPException(status_code=400, detail=_error_schema("'end' must not be before 'start'.", field=None))
+    start_dt = None
+    end_dt   = None
+    if start:
+        try:
+            start_dt = _parse_iso(start)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
+    if end:
+        try:
+            end_dt = _parse_iso(end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
-            conditions = ["metric_id = %s"]
-            params: list = [metric_id]
-            if start:
-                conditions.append("timestamp >= %s")
-                params.append(start)
-            if end:
-                conditions.append("timestamp <= %s")
-                params.append(end)
-            params.append(limit)
+    if start_dt and end_dt and start_dt >= end_dt:
+        raise HTTPException(status_code=400, detail=_error_schema("'start' must be before 'end'.", field=None))
 
-            cur.execute(
-                "SELECT id, metric_id, timestamp, value, created_at "
-                "FROM readings "
-                f"WHERE {' AND '.join(conditions)} "
-                "ORDER BY timestamp ASC LIMIT %s",
-                params,
-            )
-            rows = cur.fetchall()
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id, name, unit FROM metrics WHERE id = %s", (mid,))
+                metric = cur.fetchone()
+                if not metric:
+                    raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
+
+                conditions = ["metric_id = %s"]
+                params: list = [mid]
+                if start_dt:
+                    conditions.append("timestamp >= %s")
+                    params.append(start_dt)
+                if end_dt:
+                    conditions.append("timestamp <= %s")
+                    params.append(end_dt)
+                params.append(limit)
+
+                cur.execute(
+                    "SELECT id, metric_id, timestamp, value, created_at "
+                    "FROM readings "
+                    f"WHERE {' AND '.join(conditions)} "
+                    "ORDER BY timestamp ASC LIMIT %s",
+                    params,
+                )
+                rows = cur.fetchall()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     return {
         "metric": {"id": metric["id"], "name": metric["name"], "unit": metric["unit"]},
@@ -463,11 +489,11 @@ def run_anomaly(
         raise HTTPException(status_code=400, detail=_error_schema(str(e), field="algorithm"))
 
     try:
-        start_dt = datetime.fromisoformat(start)
+        start_dt = _parse_iso(start)
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end)
+        end_dt = _parse_iso(end)
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
@@ -507,10 +533,7 @@ def run_anomaly(
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     if not rows:
-        raise HTTPException(
-            status_code=404,
-            detail=_error_schema(f"No readings found for metric_id '{mid}' in the given time range.", field="metric_id")
-        )
+        return {"status": "done", "points_processed": 0}
 
     timestamps = [r["timestamp"] for r in rows]
     values     = [r["value"] for r in rows]
@@ -541,11 +564,11 @@ def run_anomaly(
 @app.get("/anomalies")
 async def get_anomalies(metric_id: str, start: str, end: str):
     try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        start_dt = _parse_iso(start)
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid start: '{start}'. Use ISO 8601 format.", field="start"))
     try:
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        end_dt = _parse_iso(end)
     except ValueError:
         raise HTTPException(status_code=400, detail=_error_schema(f"Invalid end: '{end}'. Use ISO 8601 format.", field="end"))
 
