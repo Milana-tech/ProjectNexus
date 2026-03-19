@@ -604,6 +604,8 @@ def get_anomalies(
             if not repo.metric_exists(mid):
                 raise HTTPException(status_code=404, detail=_error_schema(f"metric_id '{mid}' not found.", field="metric_id"))
             rows = repo.list_anomalies_by_metric_and_range(mid, start_dt, end_dt)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
