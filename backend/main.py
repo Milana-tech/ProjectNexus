@@ -195,29 +195,7 @@ def get_config():
 
 
 # ---------------------------------------------------------------------------
-# Algorithms
-# ---------------------------------------------------------------------------
-
-@app.get("/algorithms")
-def get_algorithms():
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT name FROM algorithms ORDER BY name;")
-                rows = cur.fetchall()
-
-        runtime_supported = set(ALGORITHMS.keys())
-        available = [row["name"] for row in rows if row["name"] in runtime_supported]
-        return [{"name": name, "label": name.title()} for name in available]
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Failed to load algorithms")
-        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
-
-
-# ---------------------------------------------------------------------------
-# Metrics — list metrics for a zone/entity (used by frontend metric selector)
+# Metrics
 # ---------------------------------------------------------------------------
 
 @app.get("/metrics")
@@ -240,6 +218,28 @@ def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID"))
             )
             rows = cur.fetchall()
     return [{"id": row["id"], "name": row["name"], "unit": row["unit"] or ""} for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Algorithms
+# ---------------------------------------------------------------------------
+
+@app.get("/algorithms")
+def get_algorithms():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM algorithms ORDER BY name;")
+                rows = cur.fetchall()
+
+        runtime_supported = set(ALGORITHMS.keys())
+        available = [row["name"] for row in rows if row["name"] in runtime_supported]
+        return [{"name": name, "label": name.title()} for name in available]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load algorithms")
+        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +330,7 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
                         VALUES (%s, %s, %s, %s, %s)
                         """,
                         (reading.metric_id, metric_zone_map[reading.metric_id],
-                         reading.timestamp, reading.value, now),
+                        reading.timestamp, reading.value, now),
                     )
                     inserted += 1
                 except Exception as exc:
@@ -384,7 +384,7 @@ def get_readings_by_zone(
                 FROM readings r
                 JOIN metrics m ON m.id = r.metric_id
                 WHERE r.zone_id = %s
-                  AND r.timestamp BETWEEN %s AND %s
+                AND r.timestamp BETWEEN %s AND %s
                 ORDER BY r.timestamp ASC
                 """,
                 (zid, start, end),
@@ -408,7 +408,6 @@ def get_readings(
     end: str       = Query(None, description="End datetime, ISO 8601"),
     limit: int     = Query(500, ge=1, le=5000),
 ) -> dict:
-
     try:
         mid = int(metric_id)
         if mid <= 0:
@@ -596,6 +595,7 @@ async def get_anomalies(metric_id: str, start: str, end: str):
                     ORDER BY timestamp ASC
                 """, (mid, start_dt, end_dt))
                 rows = cur.fetchall()
+
     except HTTPException:
         raise
     except Exception as e:

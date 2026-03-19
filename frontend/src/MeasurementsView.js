@@ -21,14 +21,20 @@ const scoreColor = (score) => {
   return "#059669";
 };
 
-function Panel({ title, accent, children, count, loading, empty, emptyMsg }) {
+// Sanitize error messages — never show raw objects or long stack traces
+const safeMsg = (e) =>
+  typeof e?.message === "string" && e.message.length < 200
+    ? e.message
+    : "Something went wrong. Please try again.";
+
+function Panel({ title, accent, children, count, loading, empty, emptyMsg, failed }) {
   return (
     <div style={{
       flex: 1, minWidth: 0,
       background: "#ffffff",
-      border: "1px solid #e2e8f0",
+      border: `1px solid ${failed ? "#fca5a5" : "#e2e8f0"}`,
       borderRadius: 12,
-      borderTop: `3px solid ${accent}`,
+      borderTop: `3px solid ${failed ? "#ef4444" : accent}`,
       boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
       display: "flex", flexDirection: "column", overflow: "hidden",
     }}>
@@ -37,7 +43,7 @@ function Panel({ title, accent, children, count, loading, empty, emptyMsg }) {
         borderBottom: "1px solid #f1f5f9",
         display: "flex", justifyContent: "space-between", alignItems: "center",
       }}>
-        <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: "#94a3b8" }}>
+        <span style={{ fontFamily: "'Space Mono', monospace", fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: failed ? "#ef4444" : "#94a3b8" }}>
           {title}
         </span>
         {count != null && !loading && (
@@ -62,8 +68,9 @@ function Panel({ title, accent, children, count, loading, empty, emptyMsg }) {
   );
 }
 
-function ReadingsPanel({ readings, loading, fetched }) {
-  if (!fetched) return <Panel title="Raw Readings" accent="#2563eb" loading={false} empty emptyMsg="Select a metric and fetch to load raw readings." />;
+function ReadingsPanel({ readings, loading, fetched, failed }) {
+  if (!fetched && !failed) return <Panel title="Raw Readings" accent="#2563eb" loading={false} empty emptyMsg="Select a metric and fetch to load raw readings." />;
+  if (failed) return <Panel title="Raw Readings" accent="#2563eb" failed loading={false} empty emptyMsg="Could not load readings. Please try again." />;
   return (
     <Panel title="Raw Readings" accent="#2563eb" loading={loading} empty={!loading && readings.length === 0} emptyMsg="No readings found for the selected range." count={!loading ? readings.length : null}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -87,8 +94,10 @@ function ReadingsPanel({ readings, loading, fetched }) {
   );
 }
 
-function AnomalyPanel({ anomalies, loading, fetched, noRunYet }) {
-  if (!fetched) return <Panel title="Anomaly Results" accent="#10b981" loading={false} empty emptyMsg="Anomaly results will appear here after fetching." />;
+function AnomalyPanel({ anomalies, loading, fetched, noRunYet, unavailable }) {
+  if (!fetched && !unavailable) return <Panel title="Anomaly Results" accent="#10b981" loading={false} empty emptyMsg="Anomaly results will appear here after fetching." />;
+  // Distinguish between "server error" and "no run yet"
+  if (unavailable) return <Panel title="Anomaly Results" accent="#10b981" loading={false} empty emptyMsg="Anomaly data is currently unavailable. The server may be experiencing issues." />;
   if (noRunYet) return <Panel title="Anomaly Results" accent="#10b981" loading={false} empty emptyMsg={"No anomaly detection has been run yet.\nRun POST /anomalies/run first."} />;
   return (
     <Panel title="Anomaly Results" accent="#10b981" loading={loading} empty={!loading && anomalies.length === 0} emptyMsg="No anomaly results found for the selected range." count={!loading ? anomalies.length : null}>
@@ -121,23 +130,23 @@ function AnomalyPanel({ anomalies, loading, fetched, noRunYet }) {
 }
 
 export default function MeasurementsView() {
-  const [metrics, setMetrics]         = useState([]);
-  const [metricId, setMetricId]       = useState("");
-  const [rangeIdx, setRangeIdx]       = useState(1);
-  const [customStart, setCustomStart] = useState("");
-  const [customEnd, setCustomEnd]     = useState("");
-  const [readings, setReadings]       = useState([]);
-  const [anomalies, setAnomalies]     = useState([]);
-  const [loadingR, setLoadingR]       = useState(false);
-  const [loadingA, setLoadingA]       = useState(false);
+  const [metrics, setMetrics]               = useState([]);
+  const [metricId, setMetricId]             = useState("");
+  const [rangeIdx, setRangeIdx]             = useState(1);
+  const [customStart, setCustomStart]       = useState("");
+  const [customEnd, setCustomEnd]           = useState("");
+  const [readings, setReadings]             = useState([]);
+  const [anomalies, setAnomalies]           = useState([]);
+  const [loadingR, setLoadingR]             = useState(false);
+  const [loadingA, setLoadingA]             = useState(false);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
-  const [errorR, setErrorR]           = useState(null);
-  const [errorA, setErrorA]           = useState(null);
-  const [fetchedR, setFetchedR]       = useState(false);
-  const [fetchedA, setFetchedA]       = useState(false);
-  const [noRunYet, setNoRunYet]       = useState(false);
+  const [errorR, setErrorR]                 = useState(null);
+  const [fetchedR, setFetchedR]             = useState(false);
+  const [fetchedA, setFetchedA]             = useState(false);
+  const [failedR, setFailedR]               = useState(false);   // readings hard fail
+  const [noRunYet, setNoRunYet]             = useState(false);   // 404 = no detection run
+  const [anomalyUnavailable, setAnomalyUnavailable] = useState(false); // 5xx/network fail
 
-  // Load metrics on mount
   useEffect(() => {
     fetch(`${API_URL}/metrics`)
       .then(r => r.json())
@@ -169,34 +178,69 @@ export default function MeasurementsView() {
     const err = validate();
     if (err) { setErrorR(err); return; }
     const { start, end } = getRange();
-    setErrorR(null); setErrorA(null); setNoRunYet(false);
 
-    setLoadingR(true); setFetchedR(false);
+    // Reset all state before new fetch
+    setErrorR(null);
+    setNoRunYet(false);
+    setAnomalyUnavailable(false);
+    setFailedR(false);
+    setReadings([]);
+    setAnomalies([]);
+    setFetchedR(false);
+    setFetchedA(false);
+
+    // 1. Fetch readings first if this fails, stop and don't fetch anomalies
+    setLoadingR(true);
+    let readingsOk = false;
     try {
       const res = await fetch(`${API_URL}/readings?${new URLSearchParams({ metric_id: metricId, start, end })}`);
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        if (res.status === 404) throw new Error(`No data found for the selected metric and time range.`);
+        if (res.status === 404) throw new Error("No data found for the selected metric and time range.");
         throw new Error(b.detail || "Could not load readings. Please try again.");
       }
       const data = await res.json();
-      setReadings(data.readings || []); setFetchedR(true);
-    } catch (e) { setErrorR(e.message); setReadings([]); }
-    finally { setLoadingR(false); }
+      setReadings(data.readings || []);
+      setFetchedR(true);
+      readingsOk = true;
+    } catch (e) {
+      setErrorR(safeMsg(e));
+      setFailedR(true);
+    } finally {
+      setLoadingR(false);
+    }
 
-    setLoadingA(true); setFetchedA(false);
+    // 2. Only fetch anomalies if readings succeeded
+    if (!readingsOk) return;
+
+    setLoadingA(true);
     try {
       const res = await fetch(`${API_URL}/anomalies?${new URLSearchParams({ metric_id: metricId, start, end })}`);
-      if (!res.ok) { setNoRunYet(true); setFetchedA(true); return; }
+      if (!res.ok) {
+        // 404 means no detection run yet expected condition
+        if (res.status === 404) {
+          setNoRunYet(true);
+        } else {
+          // 5xx or other anomaly data genuinely unavailable
+          setAnomalyUnavailable(true);
+        }
+        setFetchedA(true);
+        return;
+      }
       const data = await res.json();
       if (data.length === 0) setNoRunYet(true);
-      setAnomalies(data); setFetchedA(true);
-    } catch (e) { setErrorA(e.message); setAnomalies([]); }
-    finally { setLoadingA(false); }
+      setAnomalies(data);
+      setFetchedA(true);
+    } catch {
+      // Network-level failure  anomaly data unavailable
+      setAnomalyUnavailable(true);
+      setFetchedA(true);
+    } finally {
+      setLoadingA(false);
+    }
   };
 
   const isCustom = QUICK_RANGES[rangeIdx].ms === null;
-  const selectedMetric = metrics.find(m => String(m.id) === metricId);
 
   return (
     <div className="dash">
@@ -213,7 +257,6 @@ export default function MeasurementsView() {
       </div>
 
       <div className="controls">
-        {/* Metric dropdown */}
         <div className="control-group">
           <label>Metric</label>
           {loadingMetrics ? (
@@ -276,16 +319,22 @@ export default function MeasurementsView() {
         </div>
       </div>
 
-      {(errorR || errorA) && (
+      {/* Readings error banner */}
+      {errorR && (
         <div style={{ background: "#fee2e2", color: "#b91c1c", padding: "12px 20px", borderRadius: 8, marginBottom: 20, border: "1px solid #f87171", fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>
-          {errorR && <div><strong>Readings:</strong> {errorR}</div>}
-          {errorA && <div><strong>Anomalies:</strong> {errorA}</div>}
+          <strong>Error:</strong> {errorR}
         </div>
       )}
 
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-        <ReadingsPanel readings={readings} loading={loadingR} fetched={fetchedR} />
-        <AnomalyPanel  anomalies={anomalies} loading={loadingA} fetched={fetchedA} noRunYet={noRunYet} />
+        <ReadingsPanel readings={readings} loading={loadingR} fetched={fetchedR} failed={failedR} />
+        <AnomalyPanel
+          anomalies={anomalies}
+          loading={loadingA}
+          fetched={fetchedA}
+          noRunYet={noRunYet}
+          unavailable={anomalyUnavailable}
+        />
       </div>
 
       {fetchedA && anomalies.length > 0 && (
