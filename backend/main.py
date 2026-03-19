@@ -195,7 +195,29 @@ def get_config():
 
 
 # ---------------------------------------------------------------------------
-# Metrics
+# Algorithms
+# ---------------------------------------------------------------------------
+
+@app.get("/algorithms")
+def get_algorithms():
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT name FROM algorithms ORDER BY name;")
+                rows = cur.fetchall()
+
+        runtime_supported = set(ALGORITHMS.keys())
+        available = [row["name"] for row in rows if row["name"] in runtime_supported]
+        return [{"name": name, "label": name.title()} for name in available]
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to load algorithms")
+        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
+
+
+# ---------------------------------------------------------------------------
+# Metrics — list metrics for a zone/entity (used by frontend metric selector)
 # ---------------------------------------------------------------------------
 
 @app.get("/metrics")
@@ -218,28 +240,6 @@ def get_metrics(entity_id: int = Query(..., gt=0, description="Zone/entity ID"))
             )
             rows = cur.fetchall()
     return [{"id": row["id"], "name": row["name"], "unit": row["unit"] or ""} for row in rows]
-
-
-# ---------------------------------------------------------------------------
-# Algorithms
-# ---------------------------------------------------------------------------
-
-@app.get("/algorithms")
-def get_algorithms():
-    try:
-        with get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT name FROM algorithms ORDER BY name;")
-                rows = cur.fetchall()
-
-        runtime_supported = set(ALGORITHMS.keys())
-        available = [row["name"] for row in rows if row["name"] in runtime_supported]
-        return [{"name": name, "label": name.title()} for name in available]
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("Failed to load algorithms")
-        raise HTTPException(status_code=500, detail="Failed to load algorithms") from e
 
 
 # ---------------------------------------------------------------------------
