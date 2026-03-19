@@ -13,7 +13,7 @@ import "./dashboard.css";
 
 const API_BASE =
   process.env.REACT_APP_API_URL ||
-  "http://localhost:8000";
+  "http://localhost:8001";
 
 const COLOR_PALETTE = [
   "#2563eb",
@@ -83,8 +83,8 @@ function useReadings({ metricId, start, end, skip }) {
     try {
       const qs = new URLSearchParams({
         metric_id: String(metricId),
-        start:     new Date(start).toISOString(),
-        end:       new Date(end).toISOString(),
+        start_time: new Date(start).toISOString(),
+        end_time:   new Date(end).toISOString(),
         limit:     "2000",
       });
 
@@ -95,7 +95,11 @@ function useReadings({ metricId, start, end, skip }) {
       if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
 
       const json = await res.json();
-      const readings = Array.isArray(json.readings) ? json.readings : [];
+      const readings = Array.isArray(json)
+        ? json
+        : Array.isArray(json.readings)
+          ? json.readings
+          : [];
       setData(
         readings.map((r) => ({
           time:  new Date(r.timestamp).getTime(),
