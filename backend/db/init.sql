@@ -140,3 +140,23 @@ INSERT INTO metrics (device_id, name, unit) VALUES
     ((SELECT id FROM devices WHERE name = 'Device 2'), 'temperature', 'celsius'),
     ((SELECT id FROM devices WHERE name = 'Device 2'), 'humidity',    'percent')
 ON CONFLICT (device_id, name) DO NOTHING;
+
+-- =============================================================================
+-- JSONB metadata columns and indexes (idempotent)
+-- =============================================================================
+
+-- Add metadata column to zones (entities)
+ALTER TABLE zones
+    ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+-- Add metadata column to metrics
+ALTER TABLE metrics
+    ADD COLUMN IF NOT EXISTS metadata JSONB;
+
+-- Create GIN indexes for JSONB containment queries
+CREATE INDEX IF NOT EXISTS idx_zones_metadata_gin ON zones USING gin (metadata);
+CREATE INDEX IF NOT EXISTS idx_metrics_metadata_gin ON metrics USING gin (metadata);
+
+-- Example expression index for commonly-filtered keys (equality lookups)
+-- Add additional expression indexes for keys you filter by frequently.
+CREATE INDEX IF NOT EXISTS idx_zones_metadata_location ON zones ((metadata ->> 'location'));

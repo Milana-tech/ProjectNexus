@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, field_validator, model_validator
 from anomaly import ALGORITHMS, get_algorithm
+import json
 
 logging.basicConfig(
     level=logging.INFO,
@@ -162,18 +163,79 @@ def get_zones():
 # ---------------------------------------------------------------------------
 
 @app.get("/entities", summary="List all entities")
-def get_entities():
+def get_entities(request: Request):
+    """List entities. Query params that don't match known fields are treated as metadata filters.
+
+    Example: `/entities?location=Floor%202` -> WHERE metadata ->> 'location' = 'Floor 2'
+    """
     try:
+        params = dict(request.query_params)
+        where_clauses = []
+        values = []
+
+        # Support simple known filters
+        if 'name' in params:
+            where_clauses.append("name = %s")
+            values.append(params.pop('name'))
+
+        # Any remaining params are treated as metadata equality checks
+        for k, v in params.items():
+            # Use metadata ->> key equality; key passed as parameter to avoid injection
+            where_clauses.append("(metadata ->> %s) = %s")
+            values.append(k)
+            values.append(v)
+
+        sql = "SELECT id, name, metadata FROM zones"
+        if where_clauses:
+            sql += " WHERE " + " AND ".join(where_clauses)
+        sql += " ORDER BY name;"
+
         with get_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id, name FROM zones ORDER BY name;")
+                cur.execute(sql, tuple(values))
                 rows = cur.fetchall()
-        return [{"id": row["id"], "name": row["name"]} for row in rows]
+
+        return [{"id": row["id"], "name": row["name"], "metadata": row.get("metadata") or {}} for row in rows]
     except HTTPException:
         raise
     except Exception as e:
         log.exception("Failed to load entities")
         raise HTTPException(status_code=500, detail="Failed to load entities") from e
+
+
+@app.patch("/entities/{entity_id}")
+def patch_entity(entity_id: int = Path(..., gt=0), body: dict | None = None):
+    """Merge-update entity metadata. Body example: {"metadata": {"location": "Floor 2"}}"""
+    if not body or 'metadata' not in body:
+        raise HTTPException(status_code=400, detail=_error_schema("Missing 'metadata' in request body"))
+    incoming = body['metadata']
+    if not isinstance(incoming, dict):
+        raise HTTPException(status_code=400, detail=_error_schema("'metadata' must be an object"))
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM zones WHERE id = %s", (entity_id,))
+                if cur.fetchone() is None:
+                    raise HTTPException(status_code=404, detail=_error_schema(f"Entity {entity_id} not found.", field="entity_id"))
+
+                # Merge incoming metadata into existing JSONB using || operator
+                cur.execute(
+                    """
+                    UPDATE zones
+                    SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb
+                    WHERE id = %s
+                    RETURNING id, metadata
+                    """,
+                    (json.dumps(incoming), entity_id),
+                )
+                row = cur.fetchone()
+                return {"id": row["id"], "metadata": row["metadata"] or {}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Failed to patch entity metadata")
+        raise HTTPException(status_code=500, detail=_error_schema("Failed to patch entity metadata")) from e
 
 
 # ---------------------------------------------------------------------------
