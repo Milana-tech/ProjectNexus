@@ -97,12 +97,12 @@ async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPE
 async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
     first = exc.errors()[0] if exc.errors() else None
     if not first:
-        return JSONResponse(status_code=422, content=_error_schema("Validation error"))
+        return JSONResponse(status_code=400, content=_error_schema("Validation error"))
 
     loc = tuple(first.get("loc", ()))
     field, index = _extract_field_index_from_loc(loc)
     msg = first.get("msg") or "Validation error"
-    return JSONResponse(status_code=422, content=_error_schema(str(msg), field=field, index=index))
+    return JSONResponse(status_code=400, content=_error_schema(str(msg), field=field, index=index))
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +283,7 @@ def bulk_ingest(body: BulkReadingsRequest) -> BulkReadingsResponse:
             unknown = set(unique_ids) - set(metric_zone_map)
             if unknown:
                 raise HTTPException(
-                    status_code=422,
+                    status_code=400,
                     detail=_error_schema(f"Unknown metric_id(s): {sorted(unknown)}.", field="metric_id"),
                 )
 
@@ -386,7 +386,7 @@ def get_readings(
             if end and end.tzinfo is None:
                 end = end.replace(tzinfo=timezone.utc)
             if start and end and end < start:
-                raise HTTPException(status_code=422, detail=_error_schema("'end' must not be before 'start'.", field=None))
+                raise HTTPException(status_code=400, detail=_error_schema("'end' must not be before 'start'.", field=None))
 
             conditions = ["metric_id = %s"]
             params: list = [metric_id]
