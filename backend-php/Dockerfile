@@ -11,9 +11,15 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 ENV COMPOSER_ALLOW_SUPERUSER=1
 
+ARG INSTALL_DEV_DEPS=1
+
 COPY composer.json ./
 
-RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+RUN if [ "$INSTALL_DEV_DEPS" = "0" ]; then \
+        composer install --no-dev --no-interaction --no-progress --prefer-dist; \
+    else \
+        composer install --no-interaction --no-progress --prefer-dist; \
+    fi
 
 COPY . .
 
