@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Project Nexus - Entity Readings",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Manual verification collection for entity-based retrieval endpoint."
+  },
+  "item": [
+    {
+      "name": "Entity Readings - Valid",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?entity_id={{entityId}}&start_time={{startTime}}&end_time={{endTime}}&limit=10000",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "entity_id", "value": "{{entityId}}" },
+            { "key": "start_time", "value": "{{startTime}}" },
+            { "key": "end_time", "value": "{{endTime}}" },
+            { "key": "limit", "value": "10000" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Entity Readings - Missing Entity",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?entity_id=9999999",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "entity_id", "value": "9999999" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Entity Readings - Invalid Timestamp",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?entity_id={{entityId}}&start_time=not-a-date&end_time={{endTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "entity_id", "value": "{{entityId}}" },
+            { "key": "start_time", "value": "not-a-date" },
+            { "key": "end_time", "value": "{{endTime}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Entity Readings - Reversed Time",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?entity_id={{entityId}}&start_time={{endTime}}&end_time={{startTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "entity_id", "value": "{{entityId}}" },
+            { "key": "start_time", "value": "{{endTime}}" },
+            { "key": "end_time", "value": "{{startTime}}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Entity Readings - Metric Mismatch",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/readings?entity_id={{entityId}}&metric_id={{wrongMetricId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            { "key": "entity_id", "value": "{{entityId}}" },
+            { "key": "metric_id", "value": "{{wrongMetricId}}" }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8001" },
+    { "key": "entityId", "value": "1" },
+    { "key": "wrongMetricId", "value": "999999" },
+    { "key": "startTime", "value": "2026-03-18T10:00:00Z" },
+    { "key": "endTime", "value": "2026-03-18T12:00:00Z" }
+  ]
+}

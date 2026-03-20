@@ -1,0 +1,118 @@
+{
+  "info": {
+    "name": "Project Nexus - ISXI-279",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Manual verification collection for metric retrieval user story ISXI-279."
+  },
+  "item": [
+    {
+      "name": "Readings - Valid Request",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/readings?metric_id={{metricId}}&start_time={{startTime}}&end_time={{endTime}}&limit=10000",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            {"key": "metric_id", "value": "{{metricId}}"},
+            {"key": "start_time", "value": "{{startTime}}"},
+            {"key": "end_time", "value": "{{endTime}}"},
+            {"key": "limit", "value": "10000"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Readings - Metric Not Found",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/readings?metric_id=9999999&start_time={{startTime}}&end_time={{endTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            {"key": "metric_id", "value": "9999999"},
+            {"key": "start_time", "value": "{{startTime}}"},
+            {"key": "end_time", "value": "{{endTime}}"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Readings - Invalid Timestamp",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/readings?metric_id={{metricId}}&start_time=not-a-date&end_time={{endTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            {"key": "metric_id", "value": "{{metricId}}"},
+            {"key": "start_time", "value": "not-a-date"},
+            {"key": "end_time", "value": "{{endTime}}"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Readings - Reversed Time Range",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/readings?metric_id={{metricId}}&start_time={{endTime}}&end_time={{startTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            {"key": "metric_id", "value": "{{metricId}}"},
+            {"key": "start_time", "value": "{{endTime}}"},
+            {"key": "end_time", "value": "{{startTime}}"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Readings - Empty List",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/readings?metric_id={{metricId}}&start_time=2000-01-01T00:00:00Z&end_time=2000-01-01T01:00:00Z",
+          "host": ["{{baseUrl}}"],
+          "path": ["readings"],
+          "query": [
+            {"key": "metric_id", "value": "{{metricId}}"},
+            {"key": "start_time", "value": "2000-01-01T00:00:00Z"},
+            {"key": "end_time", "value": "2000-01-01T01:00:00Z"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Anomalies - Valid Request",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/anomalies?metric_id={{metricId}}&start={{startTime}}&end={{endTime}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["anomalies"],
+          "query": [
+            {"key": "metric_id", "value": "{{metricId}}"},
+            {"key": "start", "value": "{{startTime}}"},
+            {"key": "end", "value": "{{endTime}}"}
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8000"},
+    {"key": "metricId", "value": "10"},
+    {"key": "startTime", "value": "2026-03-18T10:00:00Z"},
+    {"key": "endTime", "value": "2026-03-18T12:00:00Z"}
+  ]
+}
