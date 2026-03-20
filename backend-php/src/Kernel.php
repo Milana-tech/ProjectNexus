@@ -9,7 +9,6 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 use Symfony\Component\HttpKernel\Kernel as BaseKernel;
-use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
 class Kernel extends BaseKernel
 {
@@ -22,8 +21,17 @@ class Kernel extends BaseKernel
         ];
     }
 
-    protected function configureContainer(ContainerConfigurator $container): void
+    protected function configureContainer(ContainerConfigurator $container, LoaderInterface $loader): void
     {
+        if ($this->environment === 'test') {
+            $container->extension('framework', [
+                'test' => true,
+                'session' => [
+                    'storage_factory_id' => 'session.storage.factory.mock_file',
+                ],
+            ]);
+        }
+
         $services = $container->services();
         $services->defaults()
             ->autowire()
