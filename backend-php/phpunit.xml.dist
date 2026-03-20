@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/symfony/phpunit-bridge/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         failOnRisky="true"
+         failOnWarning="true">
+    <php>
+        <server name="APP_ENV" value="test"/>
+        <server name="APP_DEBUG" value="0"/>
+        <server name="INGEST_BEARER_TOKEN" value="test-token"/>
+    </php>
+
+    <testsuites>
+        <testsuite name="ProjectNexus">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>
