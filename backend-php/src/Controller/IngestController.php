@@ -3,7 +3,9 @@
 namespace App\Controller;
 
 use App\Support\ApiResponse;
+use App\Support\Database;
 use DateTimeImmutable;
+use PDOException;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
@@ -81,6 +83,44 @@ final class IngestController
 
         if ($errors !== []) {
             return new JsonResponse(['errors' => $errors], 422);
+        }
+
+        $entityId = (int) $entityIdRaw;
+        $metricId = (int) $metricIdRaw;
+        $numericValue = (float) $value;
+        $timestamp = $this->parseIsoDateTime((string) $timestampRaw);
+
+        if ($timestamp === null) {
+            return new JsonResponse(['errors' => [['field' => 'timestamp', 'message' => 'timestamp must be ISO 8601 datetime.']]], 422);
+        }
+
+        try {
+            $pdo = Database::connectFromEnv();
+
+            $zoneExists = $pdo->prepare('SELECT 1 FROM zones WHERE id = :entity_id');
+            $zoneExists->execute(['entity_id' => $entityId]);
+            if (!$zoneExists->fetchColumn()) {
+                return ApiResponse::error(400, sprintf('Unknown entity_id: %d', $entityId), $path);
+            }
+
+            $metricExists = $pdo->prepare('SELECT 1 FROM metrics WHERE id = :metric_id');
+            $metricExists->execute(['metric_id' => $metricId]);
+            if (!$metricExists->fetchColumn()) {
+                return ApiResponse::error(400, sprintf('Unknown metric_id: %d', $metricId), $path);
+            }
+
+            $statement = $pdo->prepare(
+                'INSERT INTO readings (timestamp, value, zone_id, metric_id)
+                 VALUES (:timestamp, :value, :zone_id, :metric_id)'
+            );
+            $statement->execute([
+                'timestamp' => $timestamp->format('Y-m-d H:i:sP'),
+                'value' => $numericValue,
+                'zone_id' => $entityId,
+                'metric_id' => $metricId,
+            ]);
+        } catch (PDOException) {
+            return ApiResponse::error(500, 'Failed to persist ingest payload.', $path);
         }
 
         return new JsonResponse(['status' => 'created'], 201);
