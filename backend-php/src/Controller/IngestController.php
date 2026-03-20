@@ -27,6 +27,105 @@ final class IngestController
             return new JsonResponse(['error' => 'Invalid JSON'], 400);
         }
 
+        $isBulk = $this->isList($data);
+        if ($isBulk) {
+            return $this->handleBulk($data);
+        }
+
+        return $this->handleSingle($data);
+    }
+
+    /** @param array<string,mixed> $data */
+    private function handleSingle(array $data): JsonResponse
+    {
+        $validation = $this->validateReading($data);
+        if ($validation !== null) {
+            return $validation;
+        }
+
+        $timestamp = \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, (string) $data['timestamp']);
+        if ($timestamp === false) {
+            return new JsonResponse(['error' => 'Validation failed', 'field' => 'timestamp'], 422);
+        }
+
+        $zoneId = (int) $data['zone_id'];
+        $metricId = (int) $data['metric_id'];
+        $value = (float) $data['value'];
+
+        try {
+            $pdo = $this->pdoFromEnv();
+            $stmt = $pdo->prepare('INSERT INTO readings (timestamp, value, zone_id, metric_id) VALUES (:timestamp, :value, :zone_id, :metric_id)');
+            $stmt->execute([
+                'timestamp' => $timestamp->format('Y-m-d\TH:i:sP'),
+                'value' => $value,
+                'zone_id' => $zoneId,
+                'metric_id' => $metricId,
+            ]);
+        } catch (\Throwable $e) {
+            return new JsonResponse(['error' => 'Database error'], 500);
+        }
+
+        return new JsonResponse(['status' => 'created'], 201);
+    }
+
+    /** @param array<int,mixed> $data */
+    private function handleBulk(array $data): JsonResponse
+    {
+        if (count($data) === 0) {
+            return new JsonResponse(['error' => 'Validation failed', 'field' => 'payload'], 422);
+        }
+
+        foreach ($data as $index => $item) {
+            if (!is_array($item)) {
+                return new JsonResponse(['error' => 'Validation failed', 'field' => 'payload', 'index' => $index], 422);
+            }
+
+            $validation = $this->validateReading($item);
+            if ($validation !== null) {
+                $body = $validation->getData();
+                if (is_array($body)) {
+                    $body['index'] = $index;
+                    return new JsonResponse($body, $validation->getStatusCode());
+                }
+
+                return $validation;
+            }
+        }
+
+        try {
+            $pdo = $this->pdoFromEnv();
+            $pdo->beginTransaction();
+
+            $stmt = $pdo->prepare('INSERT INTO readings (timestamp, value, zone_id, metric_id) VALUES (:timestamp, :value, :zone_id, :metric_id)');
+            foreach ($data as $item) {
+                $timestamp = \DateTimeImmutable::createFromFormat(\DateTimeInterface::ATOM, (string) $item['timestamp']);
+                if ($timestamp === false) {
+                    throw new \RuntimeException('Invalid timestamp');
+                }
+
+                $stmt->execute([
+                    'timestamp' => $timestamp->format('Y-m-d\TH:i:sP'),
+                    'value' => (float) $item['value'],
+                    'zone_id' => (int) $item['zone_id'],
+                    'metric_id' => (int) $item['metric_id'],
+                ]);
+            }
+
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            if (isset($pdo) && $pdo instanceof \PDO && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            return new JsonResponse(['error' => 'Database error'], 500);
+        }
+
+        return new JsonResponse(['status' => 'created', 'count' => count($data)], 201);
+    }
+
+    /** @param array<string,mixed> $data */
+    private function validateReading(array $data): ?JsonResponse
+    {
         $required = ['timestamp', 'value', 'zone_id', 'metric_id'];
         foreach ($required as $field) {
             if (!array_key_exists($field, $data)) {
@@ -55,24 +154,20 @@ final class IngestController
             return new JsonResponse(['error' => 'Validation failed', 'field' => 'value'], 422);
         }
 
-        $zoneId = (int) $data['zone_id'];
-        $metricId = (int) $data['metric_id'];
-        $value = (float) $data['value'];
+        return null;
+    }
 
-        try {
-            $pdo = $this->pdoFromEnv();
-            $stmt = $pdo->prepare('INSERT INTO readings (timestamp, value, zone_id, metric_id) VALUES (:timestamp, :value, :zone_id, :metric_id)');
-            $stmt->execute([
-                'timestamp' => $timestamp->format('Y-m-d\TH:i:sP'),
-                'value' => $value,
-                'zone_id' => $zoneId,
-                'metric_id' => $metricId,
-            ]);
-        } catch (\Throwable $e) {
-            return new JsonResponse(['error' => 'Database error'], 500);
+    private function isList(array $data): bool
+    {
+        $expectedKey = 0;
+        foreach ($data as $key => $_value) {
+            if ($key !== $expectedKey) {
+                return false;
+            }
+            $expectedKey++;
         }
 
-        return new JsonResponse(['status' => 'created'], 201);
+        return true;
     }
 
     private function pdoFromEnv(): \PDO
