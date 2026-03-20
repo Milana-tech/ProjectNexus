@@ -2,7 +2,6 @@
 
 namespace App\Controller;
 
-use App\Support\ApiResponse;
 use DateTimeImmutable;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -13,32 +12,16 @@ final class IngestController
     #[Route('/ingest', name: 'ingest', methods: ['POST'])]
     public function __invoke(Request $request): JsonResponse
     {
-        $path = $request->getPathInfo();
-
-        $expectedToken = $_SERVER['INGEST_BEARER_TOKEN'] ?? $_ENV['INGEST_BEARER_TOKEN'] ?? getenv('INGEST_BEARER_TOKEN') ?: null;
-        if (!$expectedToken) {
-            return ApiResponse::error(500, 'INGEST_BEARER_TOKEN is not set', $path);
-        }
-
-        $authHeader = (string) $request->headers->get('Authorization', '');
-        if (!str_starts_with($authHeader, 'Bearer ')) {
-            return ApiResponse::error(401, 'Unauthorized', $path);
-        }
-        $providedToken = trim(substr($authHeader, strlen('Bearer ')));
-        if ($providedToken === '' || !hash_equals((string) $expectedToken, $providedToken)) {
-            return ApiResponse::error(401, 'Unauthorized', $path);
-        }
-
         $payload = $request->getContent();
 
         if ($payload === '') {
-            return ApiResponse::error(400, 'Invalid JSON', $path);
+            return new JsonResponse(['error' => 'Invalid JSON'], 400);
         }
 
         try {
             $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
         } catch (\JsonException $e) {
-            return ApiResponse::error(400, 'Invalid JSON', $path);
+            return new JsonResponse(['error' => 'Invalid JSON'], 400);
         }
 
         if (!is_array($decoded)) {
@@ -93,8 +76,8 @@ final class IngestController
             return null;
         }
 
-        if (str_ends_with($normalized, 'Z')) {
-            $normalized = substr($normalized, 0, -1).'+00:00';
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})$/', $normalized)) {
+            return null;
         }
 
         try {
