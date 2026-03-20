@@ -19,10 +19,27 @@ final class ReadingsController
         $path = $request->getPathInfo();
 
         $metricIdRaw = $request->query->get('metric_id');
-        if (!is_numeric($metricIdRaw) || (int) $metricIdRaw <= 0) {
-            return ApiResponse::error(400, 'metric_id must be a positive integer.', $path);
+        $entityIdRaw = $request->query->get('entity_id');
+
+        $metricId = null;
+        if ($metricIdRaw !== null) {
+            if (!is_numeric($metricIdRaw) || (int) $metricIdRaw <= 0) {
+                return ApiResponse::error(400, 'metric_id must be a positive integer.', $path);
+            }
+            $metricId = (int) $metricIdRaw;
         }
-        $metricId = (int) $metricIdRaw;
+
+        $entityId = null;
+        if ($entityIdRaw !== null) {
+            if (!is_numeric($entityIdRaw) || (int) $entityIdRaw <= 0) {
+                return ApiResponse::error(400, 'entity_id must be a positive integer.', $path);
+            }
+            $entityId = (int) $entityIdRaw;
+        }
+
+        if ($metricId === null && $entityId === null) {
+            return ApiResponse::error(400, 'Either metric_id or entity_id query parameter is required.', $path);
+        }
 
         $startRaw = (string) ($request->query->get('start_time') ?? $request->query->get('start') ?? '');
         $endRaw = (string) ($request->query->get('end_time') ?? $request->query->get('end') ?? '');
@@ -58,11 +75,23 @@ final class ReadingsController
             $pdo = Database::connectFromEnv();
             $repo = new MeasurementRepository($pdo);
 
-            if (!$repo->metricExists($metricId)) {
-                return ApiResponse::error(404, sprintf('metric_id %d not found.', $metricId), $path);
-            }
+            if ($metricId !== null) {
+                if (!$repo->metricExists($metricId)) {
+                    return ApiResponse::error(404, sprintf('metric_id %d not found.', $metricId), $path);
+                }
 
-            $rows = $repo->fetchByMetricAndRange($metricId, $start, $end, $limit);
+                $rows = $repo->fetchByMetricAndRange($metricId, $start, $end, $limit);
+            } else {
+                if ($entityId === null) {
+                    return ApiResponse::error(400, 'Either metric_id or entity_id query parameter is required.', $path);
+                }
+
+                if (!$repo->entityExists($entityId)) {
+                    return ApiResponse::error(404, sprintf('entity_id %d not found.', $entityId), $path);
+                }
+
+                $rows = $repo->fetchByEntityAndRange($entityId, $start, $end, $limit);
+            }
         } catch (PDOException $e) {
             return ApiResponse::error(500, 'Database error while retrieving readings.', $path);
         }
@@ -71,6 +100,7 @@ final class ReadingsController
             'timestamp' => (new DateTimeImmutable((string) $row['timestamp']))->format(DATE_ATOM),
             'value' => (float) $row['value'],
             'metric_id' => (int) $row['metric_id'],
+            'entity_id' => (int) ($row['zone_id'] ?? 0),
         ], $rows);
 
         return new JsonResponse($payload);
