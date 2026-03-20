@@ -9,6 +9,10 @@
     "symfony/dotenv": "^7.1",
     "symfony/yaml": "^7.1"
   },
+  "require-dev": {
+    "symfony/browser-kit": "^7.1",
+    "symfony/phpunit-bridge": "^7.1"
+  },
   "config": {
     "allow-plugins": {
       "symfony/runtime": true
@@ -17,6 +21,11 @@
   "autoload": {
     "psr-4": {
       "App\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "App\\Tests\\": "tests/"
     }
   }
 }
